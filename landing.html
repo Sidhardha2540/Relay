@@ -1,0 +1,1885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Coord — Local Protocol for Parallel Coding Agents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ─────────────────────────────────────────────────────────────
+   Coord — design system v2
+   - Cream + teal palette preserved (per user feedback)
+   - Typography: mono is the lead voice; sans = body; serif = one moment
+   - Layout: data-driven; the page renders FROM state, not hardcoded
+   ───────────────────────────────────────────────────────────── */
+:root {
+  /* surfaces */
+  --bg:        #FDF6E9;
+  --bg-2:      #F7EDD7;
+  --bg-3:      #F1E4C7;
+  --surface:   #FFFFFF;
+
+  /* ink */
+  --ink:       #1A1207;
+  --ink-2:     #5C4F38;
+  --ink-3:     #9B8D74;
+  --ink-4:     #C2B59B;
+
+  /* rules */
+  --rule:        rgba(26,18,7,0.10);
+  --rule-2:      rgba(26,18,7,0.06);
+  --rule-strong: rgba(26,18,7,0.18);
+
+  /* coord brand */
+  --coord-dark:  #0D1117;
+  --accent:      #00B488;
+  --accent-2:    #00C896;
+  --accent-3:    #00E5B0;
+
+  /* agent palette — used in this order as agents connect */
+  --agent-a:  #5B4FE8;  /* claude-code · violet */
+  --agent-b:  #047857;  /* cursor · green */
+  --agent-c:  #B25028;  /* aider · terra cotta */
+  --agent-d:  #B91C1C;  /* roo · red */
+  --agent-e:  #C2710D;  /* continue · amber */
+  --agent-f:  #1E40AF;  /* cline · blue */
+
+  /* event semantics */
+  --intent:    #C2710D;
+  --discovery: #1E40AF;
+  --decision:  #047857;
+  --question:  #B91C1C;
+  --intent-bg:    rgba(194,113,13,0.08);
+  --discovery-bg: rgba(30,64,175,0.08);
+  --decision-bg:  rgba(4,120,87,0.08);
+  --question-bg:  rgba(185,28,28,0.08);
+
+  --serif: 'Instrument Serif', 'Times New Roman', serif;
+  --sans:  'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono:  'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--ink); }
+body {
+  font-family: var(--sans);
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  font-size: 14px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* paper grain */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(194,113,13,0.04) 0, transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(0,180,136,0.04) 0, transparent 40%);
+}
+
+::selection { background: var(--accent-3); color: var(--ink); }
+
+/* ─── HEADER ────────────────────────────────────────────────── */
+.app-header {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; gap: 16px;
+  height: 52px;
+  padding: 0 28px;
+  background: rgba(253,246,233,0.85);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--rule);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 16px; height: 16px;
+  position: relative;
+}
+.brand-mark::before, .brand-mark::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+}
+.brand-mark::before {
+  inset: 0;
+  border: 1.5px solid var(--coord-dark);
+}
+.brand-mark::after {
+  inset: 4.5px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(0,180,136,0.5);
+}
+.brand-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.brand-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+.header-spacer { flex: 1; }
+.header-meta {
+  display: flex; align-items: center; gap: 10px;
+}
+.btn-add {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  padding: 5px 11px 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, transform 0.08s;
+}
+.btn-add:hover { background: var(--bg-3); border-color: var(--rule-strong); }
+.btn-add:active { transform: scale(0.98); }
+.btn-add .plus {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+}
+.btn-add[data-full="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.live-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: rgba(0,180,136,0.10);
+  border: 1px solid rgba(0,180,136,0.25);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+}
+.live-chip .pulse {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,229,176,0.6); }
+  50%      { box-shadow: 0 0 0 6px rgba(0,229,176,0); }
+}
+
+/* ─── PAGE ─────────────────────────────────────────────────── */
+.page {
+  position: relative;
+  z-index: 2;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 28px;
+}
+
+/* ─── HERO — function signatures, not headlines ────────────── */
+.hero {
+  padding: 88px 0 72px;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 64px;
+  align-items: start;
+}
+.hero-kicker {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 28px;
+}
+.hero-kicker::before {
+  content: '';
+  width: 24px; height: 1px; background: var(--ink-2);
+}
+
+/* the protocol AS the headline — typeset as code */
+.hero-protocol {
+  font-family: var(--mono);
+  font-size: clamp(20px, 2.5vw, 28px);
+  line-height: 1.55;
+  font-weight: 500;
+  color: var(--ink);
+  margin-bottom: 40px;
+  letter-spacing: -0.005em;
+}
+.hero-protocol .row {
+  display: flex; align-items: baseline; gap: 16px;
+  padding: 4px 0;
+  position: relative;
+}
+.hero-protocol .row::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  width: 4px; height: 4px; border-radius: 50%;
+  background: transparent;
+  transform: translate(-14px, -50%);
+}
+.hero-protocol .row.intent::before    { background: var(--intent); }
+.hero-protocol .row.decision::before  { background: var(--decision); }
+.hero-protocol .row.discovery::before { background: var(--discovery); }
+.hero-protocol .row.question::before  { background: var(--question); }
+.hero-protocol .fn { color: var(--accent); font-weight: 600; }
+.hero-protocol .par { color: var(--ink-3); }
+.hero-protocol .arrow { color: var(--ink-3); margin: 0 4px; }
+.hero-protocol .out { color: var(--ink-2); font-style: italic; }
+.hero-protocol .out.intent    { color: var(--intent); }
+.hero-protocol .out.decision  { color: var(--decision); }
+.hero-protocol .out.discovery { color: var(--discovery); }
+.hero-protocol .out.question  { color: var(--question); }
+
+.hero-lede {
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 540px;
+  margin-bottom: 36px;
+  letter-spacing: -0.003em;
+}
+.hero-lede strong { color: var(--ink); font-weight: 600; }
+
+/* spec strip — LOCAL focused, no "scale" lies */
+.spec-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  max-width: 600px;
+}
+.spec-cell {
+  padding: 14px 16px 14px 0;
+  border-right: 1px solid var(--rule);
+}
+.spec-cell:last-child { border-right: none; padding-right: 0; }
+.spec-cell:not(:first-child) { padding-left: 16px; }
+.spec-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 5px;
+}
+.spec-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* ── HERO right: live agent strip + transcript ── */
+.hero-live {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.6) inset,
+    0 6px 16px -8px rgba(26,18,7,0.06),
+    0 24px 48px -16px rgba(26,18,7,0.10);
+}
+.hl-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg-2);
+}
+.hl-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,180,136,0.18);
+}
+.hl-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.hl-title strong { color: var(--ink); font-weight: 600; }
+.hl-meta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+/* live agent chips */
+.hl-agents {
+  padding: 14px;
+  display: flex; flex-wrap: wrap; gap: 8px;
+  border-bottom: 1px solid var(--rule-2);
+  min-height: 76px;
+}
+.agent-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 11px 7px 9px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  transition: transform 0.18s, opacity 0.18s;
+  animation: chip-in 0.32s ease both;
+}
+@keyframes chip-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.agent-chip.leaving {
+  animation: chip-out 0.24s ease both;
+}
+@keyframes chip-out {
+  to { opacity: 0; transform: translateY(-4px) scale(0.96); }
+}
+.agent-chip .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.agent-chip .id { font-weight: 600; }
+.agent-chip .scope { color: var(--ink-2); }
+.agent-chip .ttl { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.agent-chip .x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  margin-left: 2px;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.agent-chip .x:hover { background: var(--rule); color: var(--ink); }
+
+/* transcript */
+.hl-body {
+  padding: 14px 0 14px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.85;
+  color: var(--ink-2);
+  height: 220px;
+  overflow: hidden;
+  position: relative;
+}
+.hl-body::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 48px;
+  background: linear-gradient(180deg, transparent, var(--surface));
+  pointer-events: none;
+}
+.tline { padding: 0 14px; display: flex; gap: 12px; align-items: baseline; opacity: 0; animation: line-in 0.4s ease forwards; white-space: nowrap; overflow: hidden; }
+.tline .ts { color: var(--ink-3); flex-shrink: 0; }
+.tline .src { font-weight: 600; flex-shrink: 0; min-width: 88px; }
+.tline .verb { color: var(--ink-2); flex-shrink: 0; }
+.tline .arg { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tline .arg .str { color: var(--decision); }
+.tline .arg .key { color: var(--intent); }
+.tline .arg .num { color: var(--discovery); }
+@keyframes line-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── SECTION SCAFFOLD ──────────────────────────────────────── */
+.section { padding: 64px 0; border-top: 1px solid var(--rule); }
+.sec-num {
+  display: flex; align-items: baseline; gap: 14px;
+  margin-bottom: 18px;
+}
+.sec-num .n {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.sec-num .t {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.sec-num .rule {
+  flex: 1; height: 1px; background: var(--rule); align-self: center;
+}
+.sec-title {
+  font-family: var(--sans);
+  font-size: clamp(28px, 3.4vw, 40px);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin-bottom: 14px;
+  max-width: 760px;
+}
+.sec-title em {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.sec-lede {
+  font-size: 15.5px;
+  color: var(--ink-2);
+  max-width: 620px;
+  line-height: 1.6;
+  margin-bottom: 40px;
+}
+.sec-lede code {
+  font-family: var(--mono);
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--bg-2);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* ─── TOPOLOGY — data-driven, N agents around the disk ─────── */
+.topology {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  padding: 32px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.6) inset, 0 30px 60px -30px rgba(26,18,7,0.08);
+  overflow: hidden;
+}
+.topo-bg {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--rule-2) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rule-2) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-position: -1px -1px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 70% 80% at 50% 50%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 50%, #000 30%, transparent 100%);
+}
+.topo-stage {
+  position: relative;
+  height: 480px;
+  margin: 0 auto;
+}
+.topo-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* nodes positioned absolutely from JS */
+.node {
+  position: absolute;
+  z-index: 2;
+  width: 224px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transform: translate(-50%, -50%);
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              left 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              top 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.18s, border-color 0.18s;
+  box-shadow: 0 4px 14px -8px rgba(26,18,7,0.1);
+  animation: node-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes node-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.85); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.node.leaving {
+  animation: node-out 0.32s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+@keyframes node-out {
+  to { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+}
+.node:hover {
+  border-color: var(--rule-strong);
+  box-shadow: 0 12px 28px -12px rgba(26,18,7,0.18);
+}
+.node-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px;
+}
+.node-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.node-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+.node-tag {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.node-disconnect {
+  margin-left: 4px;
+  width: 16px; height: 16px;
+  border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-3);
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.14s, color 0.14s;
+}
+.node-disconnect:hover { background: var(--rule); color: var(--ink); }
+.node-rows { display: flex; flex-direction: column; gap: 6px; }
+.node-row {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.node-row .k { color: var(--ink-3); min-width: 50px; }
+.node-row .v { color: var(--ink); font-variant-numeric: tabular-nums; }
+.node-row .v.scope { font-weight: 500; }
+.node-row .v.ttl   { font-variant-numeric: tabular-nums; }
+.node-row .v.ttl.warn { color: var(--question); }
+
+/* COORD disk centered */
+.coord-disk-wrap {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+}
+.coord-disk {
+  width: 124px; height: 124px;
+  border-radius: 50%;
+  background: var(--coord-dark);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  position: relative;
+  box-shadow:
+    0 0 0 1px rgba(0,180,136,0.35),
+    0 0 0 8px rgba(0,180,136,0.06),
+    0 24px 48px -16px rgba(13,17,23,0.4);
+}
+.coord-disk::before {
+  content: '';
+  position: absolute;
+  inset: -16px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,180,136,0.18);
+  animation: ring 4s ease-out infinite;
+}
+.coord-disk::after {
+  content: '';
+  position: absolute;
+  inset: -28px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,180,136,0.10);
+  animation: ring 4s ease-out infinite;
+  animation-delay: 1.4s;
+}
+@keyframes ring {
+  0%   { transform: scale(0.92); opacity: 0; }
+  20%  { opacity: 0.7; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+.coord-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--accent-3);
+}
+.coord-sub {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: rgba(0,229,176,0.55);
+  margin-top: 4px;
+  letter-spacing: 0.05em;
+}
+.coord-port {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+.coord-port .dim { color: var(--ink-3); }
+
+/* topology footer strip — local-focused stats */
+.topo-foot {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  position: relative;
+  z-index: 2;
+}
+.topo-cell {
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 13px;
+}
+.topo-cell-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 5px;
+}
+.topo-cell-value {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* topology controls bar */
+.topo-controls {
+  position: absolute;
+  top: 16px; right: 16px;
+  display: flex; gap: 8px;
+  z-index: 4;
+}
+.topo-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  padding: 5px 10px 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.14s;
+}
+.topo-btn:hover { background: var(--bg-2); border-color: var(--rule-strong); }
+.topo-btn[data-disabled="true"] { opacity: 0.4; pointer-events: none; }
+.topo-btn .plus {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; height: 12px;
+  border-radius: 2px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* ─── CONSOLE — four stores, live ─────────────────────────── */
+.console {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+.store {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 18px 18px 14px;
+  position: relative;
+  display: flex; flex-direction: column;
+  min-height: 360px;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.store:hover {
+  border-color: var(--rule-strong);
+  box-shadow: 0 12px 28px -16px rgba(26,18,7,0.12);
+}
+.store-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.store-name {
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  color: var(--ink);
+  line-height: 1;
+}
+.store-model {
+  display: inline-flex; align-items: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.store.intent .store-model    { color: var(--intent);    background: var(--intent-bg); }
+.store.discovery .store-model { color: var(--discovery); background: var(--discovery-bg); }
+.store.decision .store-model  { color: var(--decision);  background: var(--decision-bg); }
+.store.question .store-model  { color: var(--question);  background: var(--question-bg); }
+.store-purpose {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.store-rows {
+  display: flex; flex-direction: column;
+  gap: 0;
+  flex: 1;
+  border-top: 1px solid var(--rule-2);
+  min-height: 80px;
+}
+.row {
+  padding: 10px 0 9px;
+  border-bottom: 1px solid var(--rule-2);
+  display: flex; flex-direction: column;
+  gap: 4px;
+  animation: row-in 0.32s ease both;
+}
+.row:last-child { border-bottom: none; }
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.row.flash { animation: row-flash 1.2s ease both; }
+@keyframes row-flash {
+  0%   { background: var(--bg-2); }
+  100% { background: transparent; }
+}
+.row-meta {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.row-meta .agent {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-weight: 600;
+}
+.row-meta .agent::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%;
+}
+.row-meta .ts { margin-left: auto; font-variant-numeric: tabular-nums; }
+.row-meta .ttl { color: var(--intent); font-variant-numeric: tabular-nums; }
+.row-meta .ttl.warn { color: var(--question); animation: pulse-text 1.2s ease-in-out infinite; }
+@keyframes pulse-text { 0%,100%{opacity:1} 50%{opacity:0.55} }
+.row-meta .seq { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.row-content {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink);
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  word-break: break-word;
+}
+.row-content .k { color: var(--ink-2); }
+.row-content .eq { color: var(--ink-3); padding: 0 4px; }
+.row-content .v { color: var(--ink); }
+.row-content .path { color: var(--decision); }
+
+/* ttl bar — visualizes lease decay */
+.ttl-bar {
+  height: 2px;
+  background: var(--bg-3);
+  border-radius: 1px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+.ttl-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--intent);
+  border-radius: 1px;
+  transition: width 1s linear;
+}
+.ttl-bar > span.warn { background: var(--question); }
+
+/* question card with answer affordance */
+.row.q .row-content { color: var(--ink); font-weight: 500; }
+.row.q .badge {
+  color: var(--question);
+  background: var(--question-bg);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-size: 9.5px;
+}
+.row.q .answer-cta {
+  margin-top: 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--question);
+  background: var(--question-bg);
+  border: 1px solid rgba(185,28,28,0.18);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background 0.15s;
+}
+.row.q .answer-cta:hover { background: rgba(185,28,28,0.14); }
+.row.q .answer-cta.done {
+  color: var(--decision);
+  background: var(--decision-bg);
+  border-color: rgba(4,120,87,0.2);
+  cursor: default;
+}
+
+/* store footer */
+.store-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.store-foot .code {
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.store-foot .count {
+  margin-left: auto;
+  color: var(--ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* console controls */
+.console-controls {
+  display: flex; gap: 8px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+/* ─── LIVE LOG ──────────────────────────────────────────────── */
+.log-wrap {
+  background: var(--coord-dark);
+  border-radius: 12px;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 30px 60px -30px rgba(13,17,23,0.4);
+}
+.log-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(0,0,0,0.2);
+}
+.log-traffic { display: flex; gap: 6px; }
+.log-traffic span {
+  width: 9px; height: 9px; border-radius: 50%;
+}
+.log-traffic span:nth-child(1) { background: rgba(255,99,99,0.55); }
+.log-traffic span:nth-child(2) { background: rgba(255,189,46,0.55); }
+.log-traffic span:nth-child(3) { background: rgba(0,229,176,0.55); }
+.log-title {
+  margin-left: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+}
+.log-title strong { color: rgba(255,255,255,0.85); font-weight: 500; }
+.log-status {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--accent-3);
+}
+.log-status::before {
+  content: '';
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-3);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+.log-body {
+  padding: 14px 0 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.85;
+  color: rgba(255,255,255,0.7);
+  height: 220px;
+  overflow: hidden;
+  position: relative;
+}
+.log-body::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 56px;
+  background: linear-gradient(180deg, transparent, var(--coord-dark));
+  pointer-events: none;
+}
+.log-line {
+  padding: 0 16px;
+  display: flex; gap: 14px; align-items: baseline;
+  white-space: nowrap;
+  opacity: 0;
+  animation: line-in 0.35s ease forwards;
+}
+.log-line .ts   { color: rgba(255,255,255,0.35); flex-shrink: 0; }
+.log-line .src  { font-weight: 600; min-width: 92px; flex-shrink: 0; }
+.log-line .verb { color: rgba(255,255,255,0.85); flex-shrink: 0; }
+.log-line .arg  { color: rgba(255,255,255,0.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-line .arg .str { color: #FBBF24; }
+.log-line .pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.log-line .pill.c200 { background: rgba(52,211,153,0.16); color: #34D399; }
+.log-line .pill.c409 { background: rgba(248,113,113,0.16); color: #F87171; }
+.log-line .pill.c423 { background: rgba(251,191,36,0.16); color: #FBBF24; }
+
+/* ─── FOOTER ────────────────────────────────────────────────── */
+.app-footer {
+  margin-top: 96px;
+  padding: 36px 0 56px;
+  border-top: 1px solid var(--rule);
+}
+.footer-row {
+  display: flex; align-items: baseline; gap: 28px;
+  flex-wrap: wrap;
+}
+.footer-tag {
+  font-family: var(--serif);
+  font-size: 24px;
+  font-style: italic;
+  color: var(--ink-2);
+  letter-spacing: -0.01em;
+}
+.footer-meta {
+  margin-left: auto;
+  display: flex; gap: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.footer-meta b { color: var(--ink-2); font-weight: 500; }
+
+/* ─── RESPONSIVE ────────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  .hero { grid-template-columns: 1fr; gap: 48px; }
+  .console { grid-template-columns: repeat(2, 1fr); }
+  .topo-foot { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 720px) {
+  .page { padding: 0 18px; }
+  .console { grid-template-columns: 1fr; }
+  .topo-foot { grid-template-columns: 1fr; }
+  .spec-strip { grid-template-columns: 1fr 1fr; }
+  .spec-cell { border-right: none; }
+  .topo-stage { height: 600px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ─── HEADER ────────────────────────────────────────────── -->
+<header class="app-header">
+  <div class="brand">
+    <span class="brand-mark"></span>
+    <span class="brand-name">coord</span>
+    <span class="brand-tag">— local protocol</span>
+  </div>
+  <div class="header-spacer"></div>
+  <nav class="header-meta">
+    <button class="btn-add" id="hdr-add"><span class="plus">+</span> connect agent</button>
+    <span class="live-chip"><span class="pulse"></span>127.0.0.1:49152</span>
+  </nav>
+</header>
+
+<div class="page">
+
+  <!-- ─── HERO ─────────────────────────────────────────────── -->
+  <section class="hero">
+    <div>
+      <div class="hero-kicker">A local protocol for parallel coding agents</div>
+
+      <div class="hero-protocol" aria-label="Coord protocol surface">
+        <div class="row intent">    <span class="fn">claim_intent</span><span class="par">(scope)</span>      <span class="arrow">→</span> <span class="out intent">no collision</span></div>
+        <div class="row decision">  <span class="fn">commit_decision</span><span class="par">(k, v)</span>  <span class="arrow">→</span> <span class="out decision">no drift</span></div>
+        <div class="row discovery"> <span class="fn">share_discovery</span><span class="par">(fact)</span>  <span class="arrow">→</span> <span class="out discovery">no repeat</span></div>
+        <div class="row question">  <span class="fn">raise_question</span><span class="par">(asks)</span>  <span class="arrow">→</span> <span class="out question">no silence</span></div>
+      </div>
+
+      <p class="hero-lede">
+        One localhost daemon. Eight named tools. Four shared structures with
+        four consistency models — <strong>mechanically enforced</strong>, not
+        prompt-rules. Your coding agents stop colliding on the same files,
+        re-deriving the same facts, and silently drifting on contracts.
+      </p>
+
+      <div class="spec-strip">
+        <div class="spec-cell">
+          <div class="spec-label">Daemon</div>
+          <div class="spec-value">FastAPI · :49152</div>
+        </div>
+        <div class="spec-cell">
+          <div class="spec-label">Surface</div>
+          <div class="spec-value">8 named tools</div>
+        </div>
+        <div class="spec-cell">
+          <div class="spec-label">Stores</div>
+          <div class="spec-value">4 · 4 models</div>
+        </div>
+        <div class="spec-cell">
+          <div class="spec-label">Mode</div>
+          <div class="spec-value">local · single host</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live agent strip + transcript -->
+    <div class="hero-live">
+      <div class="hl-head">
+        <span class="hl-dot"></span>
+        <span class="hl-title"><strong>session</strong> · <span id="hl-agent-count">2</span> agents · <span id="hl-event-count">0</span> events</span>
+        <span class="hl-meta" id="hl-now">14:02:41</span>
+      </div>
+      <div class="hl-agents" id="hl-agents">
+        <!-- agent chips injected -->
+      </div>
+      <div class="hl-body" id="hl-body">
+        <!-- transcript lines injected -->
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── TOPOLOGY ─────────────────────────────────────────── -->
+  <section class="section" id="topology">
+    <div class="sec-num">
+      <span class="n">§ 01</span>
+      <span class="t">Topology</span>
+      <span class="rule"></span>
+    </div>
+    <h2 class="sec-title">A single source of truth, <em>not</em> a shared file.</h2>
+    <p class="sec-lede">
+      Each agent runs its own MCP shim on stdio; the shim proxies tool calls over
+      HTTP to the local daemon. <code>asyncio.Lock</code> + SQLite WAL serializes
+      every mutation. Two agents can never race — the protocol prevents it.
+    </p>
+
+    <div class="topology">
+      <div class="topo-bg"></div>
+
+      <div class="topo-controls">
+        <button class="topo-btn" id="topo-add"><span class="plus">+</span> connect agent</button>
+        <button class="topo-btn" id="topo-decide">+ commit decision</button>
+        <button class="topo-btn" id="topo-conflict">+ trigger 409</button>
+      </div>
+
+      <div class="topo-stage" id="topo-stage">
+        <svg class="topo-svg" id="topo-svg" viewBox="0 0 1200 480" preserveAspectRatio="none">
+          <!-- paths injected by JS -->
+        </svg>
+
+        <!-- COORD center -->
+        <div class="coord-disk-wrap">
+          <div class="coord-disk">
+            <div class="coord-label">COORD</div>
+            <div class="coord-sub">single writer</div>
+          </div>
+          <div class="coord-port"><span class="dim">::</span>49152 <span class="dim">·</span> SQLite WAL <span class="dim">+</span> JSONL</div>
+        </div>
+
+        <!-- agent nodes injected by JS -->
+      </div>
+
+      <div class="topo-foot">
+        <div class="topo-cell">
+          <div class="topo-cell-label">Connected</div>
+          <div class="topo-cell-value" id="topo-connected">2 agents</div>
+        </div>
+        <div class="topo-cell">
+          <div class="topo-cell-label">Single writer</div>
+          <div class="topo-cell-value">asyncio.Lock + WAL</div>
+        </div>
+        <div class="topo-cell">
+          <div class="topo-cell-label">Audit log</div>
+          <div class="topo-cell-value">JSONL · fsync</div>
+        </div>
+        <div class="topo-cell">
+          <div class="topo-cell-label">Identity</div>
+          <div class="topo-cell-value">implicit · shim env</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── CONSOLE ──────────────────────────────────────────── -->
+  <section class="section" id="console">
+    <div class="sec-num">
+      <span class="n">§ 02</span>
+      <span class="t">Coordination Console</span>
+      <span class="rule"></span>
+    </div>
+    <h2 class="sec-title">Four stores. <em>Four</em> consistency models.</h2>
+    <p class="sec-lede">
+      A single collapsed model would be wrong: a 409 on a discovery is incorrect;
+      LWW on a decision is catastrophic. Each store gets exactly the semantics it
+      needs — and a documented HTTP code for every conflict path.
+    </p>
+
+    <div class="console" id="console-grid">
+      <!-- INTENTS -->
+      <div class="store intent">
+        <div class="store-head">
+          <h3 class="store-name">Intents</h3>
+          <span class="store-model">TTL Lease</span>
+        </div>
+        <div class="store-purpose">Scope claims that auto-expire. Prevents two agents from touching the same files at once.</div>
+        <div class="store-rows" id="rows-intents"></div>
+        <div class="store-foot">
+          <span>conflict</span>
+          <span class="code">423</span>
+          <span class="count" id="count-intents">0 active</span>
+        </div>
+      </div>
+
+      <!-- DECISIONS -->
+      <div class="store decision">
+        <div class="store-head">
+          <h3 class="store-name">Decisions</h3>
+          <span class="store-model">First-Write-Wins</span>
+        </div>
+        <div class="store-purpose">Locked contracts — naming, signatures, schemas. Second writer gets a 409.</div>
+        <div class="store-rows" id="rows-decisions"></div>
+        <div class="store-foot">
+          <span>conflict</span>
+          <span class="code">409</span>
+          <span class="count" id="count-decisions">0 locked</span>
+        </div>
+      </div>
+
+      <!-- DISCOVERIES -->
+      <div class="store discovery">
+        <div class="store-head">
+          <h3 class="store-name">Discoveries</h3>
+          <span class="store-model">LWW + Hash</span>
+        </div>
+        <div class="store-purpose">Observations about the codebase. File hash flags stale entries automatically.</div>
+        <div class="store-rows" id="rows-discoveries"></div>
+        <div class="store-foot">
+          <span>stale</span>
+          <span class="code">410</span>
+          <span class="count" id="count-discoveries">0 cached</span>
+        </div>
+      </div>
+
+      <!-- QUESTIONS -->
+      <div class="store question">
+        <div class="store-head">
+          <h3 class="store-name">Questions</h3>
+          <span class="store-model">Append + Status</span>
+        </div>
+        <div class="store-purpose">Blockers escalated to you. Agents pause; resume from the exact point they stopped.</div>
+        <div class="store-rows" id="rows-questions"></div>
+        <div class="store-foot">
+          <span>queued</span>
+          <span class="code">202</span>
+          <span class="count" id="count-questions">0 waiting</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── LIVE LOG ─────────────────────────────────────────── -->
+  <section class="section">
+    <div class="sec-num">
+      <span class="n">§ 03</span>
+      <span class="t">Audit stream</span>
+      <span class="rule"></span>
+    </div>
+    <h2 class="sec-title">Greppable. Tailable. <em>Durable.</em></h2>
+    <p class="sec-lede">
+      Every mutation mirrors to <code>.shared/log.jsonl</code> with
+      <code>fsync</code> after each append. <code>tail -f</code> works. The
+      database can be wiped — the audit log survives.
+    </p>
+
+    <div class="log-wrap">
+      <div class="log-head">
+        <div class="log-traffic"><span></span><span></span><span></span></div>
+        <div class="log-title"><strong>tail</strong> -f .shared/log.jsonl</div>
+        <div class="log-status">streaming</div>
+      </div>
+      <div class="log-body" id="log-body"></div>
+    </div>
+  </section>
+
+  <!-- ─── FOOTER ───────────────────────────────────────────── -->
+  <footer class="app-footer">
+    <div class="footer-row">
+      <div class="footer-tag">A protocol for parallel minds — <em>local, by design</em>.</div>
+      <div class="footer-meta">
+        <span><b>v0.1.0</b></span>
+        <span>·</span>
+        <span>FastAPI</span>
+        <span>·</span>
+        <span>SQLite WAL</span>
+        <span>·</span>
+        <span>WebSocket</span>
+        <span>·</span>
+        <span>MCP</span>
+      </div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================
+   STATE — the page renders FROM here. Anything else is wrong.
+   ============================================================ */
+const AGENT_PALETTE = [
+  { id: 'claude-code', color: 'var(--agent-a)' },
+  { id: 'cursor',      color: 'var(--agent-b)' },
+  { id: 'aider',       color: 'var(--agent-c)' },
+  { id: 'roo',         color: 'var(--agent-d)' },
+  { id: 'continue',    color: 'var(--agent-e)' },
+  { id: 'cline',       color: 'var(--agent-f)' },
+];
+const SAMPLE_SCOPES = [
+  { scope: 'auth/login.ts',         action: 'refactor JWT verify' },
+  { scope: 'api/users.ts',          action: 'add pagination' },
+  { scope: 'db/migrations/0042.sql',action: 'add session table' },
+  { scope: 'lib/cache.ts',          action: 'switch to LRU' },
+  { scope: 'tests/auth.spec.ts',    action: 'cover refresh path' },
+  { scope: 'docs/api.md',           action: 'document /v2 routes' },
+];
+const SAMPLE_DECISIONS = [
+  { key: 'auth.endpoint',     value: '"POST /api/auth/login"' },
+  { key: 'token.algo',        value: '"JWT (HS256)"' },
+  { key: 'user.id',           value: '"uuid v7"' },
+  { key: 'session.ttl',       value: '"7 days"' },
+  { key: 'db.casing',         value: '"snake_case"' },
+  { key: 'errors.envelope',   value: '"{code, message}"' },
+];
+const SAMPLE_DISCOVERIES = [
+  { scope: 'db/schema.sql',         summary: 'all primary keys are UUID' },
+  { scope: 'api/*',                 summary: 'REST, no GraphQL gateway' },
+  { scope: 'auth/middleware.ts',    summary: 'exports verifyJWT @ L14' },
+  { scope: 'lib/config.ts',         summary: 'env loaded via dotenv-flow' },
+  { scope: 'tests/setup.ts',        summary: 'jest + msw mocks' },
+];
+const SAMPLE_QUESTIONS = [
+  { asks: 'Use Postgres or SQLite for sessions?', blocking: true },
+  { asks: 'Refresh token: 7d or 30d?',            blocking: false },
+  { asks: 'Reject empty body or accept?',         blocking: false },
+];
+
+let SEQ = 42;
+let EVT = 0;
+const state = {
+  agents: [],
+  intents: [],
+  decisions: [],
+  discoveries: [],
+  questions: [],
+  transcript: [],
+  log: [],
+};
+
+/* ── helpers ── */
+const fmtTime = (d = new Date()) =>
+  `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+const fmtTtl = (sec) => {
+  if (sec < 0) sec = 0;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${String(s).padStart(2,'0')}s`;
+};
+const agentColor = (id) => AGENT_PALETTE.find(a => a.id === id)?.color || 'var(--ink)';
+
+/* ============================================================
+   AGENT CONNECT / DISCONNECT
+   ============================================================ */
+function connectAgent(specificId = null) {
+  const taken = new Set(state.agents.map(a => a.id));
+  let agentDef;
+  if (specificId) {
+    agentDef = AGENT_PALETTE.find(a => a.id === specificId);
+  } else {
+    agentDef = AGENT_PALETTE.find(a => !taken.has(a.id));
+  }
+  if (!agentDef) return; // pool full
+
+  // pick a non-conflicting scope
+  const usedScopes = new Set(state.agents.map(a => a.scope));
+  const scopeDef = SAMPLE_SCOPES.find(s => !usedScopes.has(s.scope)) || SAMPLE_SCOPES[0];
+
+  const agent = {
+    id: agentDef.id,
+    color: agentDef.color,
+    scope: scopeDef.scope,
+    action: scopeDef.action,
+    ttl: 540 + Math.floor(Math.random() * 60), // ~9–10 min
+    tx: Math.floor(Math.random() * 9000) + 1000,
+  };
+  state.agents.push(agent);
+
+  // also creates an intent
+  state.intents.push({
+    id: `i_${Date.now()}_${agent.id}`,
+    agent: agent.id,
+    scope: agent.scope,
+    action: agent.action,
+    ttl: agent.ttl,
+  });
+
+  pushTranscript(agent.id, 'claim_intent', `<span class="str">"${agent.scope}"</span>`);
+  pushLog(agent.id, 'POST /intents', `scope=<span class="str">"${agent.scope}"</span>`, '200', 'c200');
+
+  rerender();
+  refreshAddButtons();
+}
+function disconnectAgent(id) {
+  const node = document.querySelector(`[data-agent-id="${id}"]`);
+  if (node) node.classList.add('leaving');
+  const chip = document.querySelector(`[data-chip-id="${id}"]`);
+  if (chip) chip.classList.add('leaving');
+  state.agents = state.agents.filter(a => a.id !== id);
+  state.intents = state.intents.filter(i => i.agent !== id);
+  pushTranscript(id, 'release_intent', '');
+  pushLog(id, 'DELETE /intents', '', '200', 'c200');
+
+  setTimeout(() => {
+    rerender();
+    refreshAddButtons();
+  }, 280);
+}
+function refreshAddButtons() {
+  const full = state.agents.length >= AGENT_PALETTE.length;
+  document.getElementById('hdr-add').dataset.full = full;
+  document.getElementById('topo-add').dataset.disabled = full;
+}
+
+/* ============================================================
+   EVENT INJECTORS — buttons in the topology controls
+   ============================================================ */
+function injectDecision() {
+  if (state.agents.length === 0) return;
+  const agent = state.agents[Math.floor(Math.random() * state.agents.length)];
+  const taken = new Set(state.decisions.map(d => d.key));
+  const def = SAMPLE_DECISIONS.find(d => !taken.has(d.key));
+  if (!def) return;
+  const dec = {
+    id: `d_${Date.now()}`,
+    agent: agent.id,
+    key: def.key,
+    value: def.value,
+    seq: ++SEQ,
+    ts: new Date(),
+  };
+  state.decisions.unshift(dec);
+  pushTranscript(agent.id, 'commit_decision', `<span class="key">${def.key}</span>=<span class="str">${def.value}</span>`);
+  pushLog(agent.id, 'POST /decisions', `key=<span class="str">"${def.key}"</span>`, '200', 'c200');
+  renderConsole();
+  flashRow(`dec-${dec.id}`);
+}
+function injectDiscovery() {
+  if (state.agents.length === 0) return;
+  const agent = state.agents[Math.floor(Math.random() * state.agents.length)];
+  const def = SAMPLE_DISCOVERIES[Math.floor(Math.random() * SAMPLE_DISCOVERIES.length)];
+  const disc = {
+    id: `f_${Date.now()}`,
+    agent: agent.id,
+    scope: def.scope,
+    summary: def.summary,
+    ts: new Date(),
+  };
+  // dedupe — if same scope, supersede
+  state.discoveries = state.discoveries.filter(d => d.scope !== def.scope);
+  state.discoveries.unshift(disc);
+  pushTranscript(agent.id, 'share_discovery', `<span class="key">${def.scope}</span> · ${def.summary}`);
+  pushLog(agent.id, 'POST /discoveries', `scope=<span class="str">"${def.scope}"</span>`, '200', 'c200');
+  renderConsole();
+  flashRow(`fact-${disc.id}`);
+}
+function injectQuestion() {
+  if (state.agents.length === 0) return;
+  const agent = state.agents[Math.floor(Math.random() * state.agents.length)];
+  const def = SAMPLE_QUESTIONS[state.questions.length % SAMPLE_QUESTIONS.length];
+  const q = {
+    id: `q_${Date.now()}`,
+    agent: agent.id,
+    asks: def.asks,
+    blocking: def.blocking,
+    answered: false,
+    ts: new Date(),
+  };
+  state.questions.unshift(q);
+  pushTranscript(agent.id, 'raise_question', `<span class="str">"${def.asks}"</span>`);
+  pushLog(agent.id, 'POST /questions', `<span class="str">"${def.asks}"</span>`, '200', 'c200');
+  renderConsole();
+  flashRow(`q-${q.id}`);
+}
+function injectConflict() {
+  if (state.agents.length < 2) {
+    // ensure 2 agents exist
+    if (state.agents.length === 0) connectAgent();
+    if (state.agents.length === 1) connectAgent();
+  }
+  const a = state.agents[0], b = state.agents[1];
+  // a's scope, claimed by b → 423
+  pushTranscript(b.id, 'claim_intent', `<span class="str">"${a.scope}"</span> <span class="key">[overlap]</span>`);
+  pushLog(b.id, 'POST /intents', `scope=<span class="str">"${a.scope}"</span>`, '423', 'c423');
+  pushLog('coord', 'conflict.prevented', `overlap ${a.id} · expires ${fmtTtl(a.ttl)}`, '', '');
+  // surface as a question
+  const q = {
+    id: `q_${Date.now()}`,
+    agent: b.id,
+    asks: `Decision conflict on auth.endpoint — existing "POST /api/auth/login" vs proposed "POST /auth"`,
+    blocking: true,
+    answered: false,
+    ts: new Date(),
+  };
+  state.questions.unshift(q);
+  renderConsole();
+  flashRow(`q-${q.id}`);
+}
+function answerQuestion(id, value) {
+  const q = state.questions.find(x => x.id === id);
+  if (!q) return;
+  q.answered = true;
+  q.answer = value || 'resolved';
+  pushTranscript('coord', 'answer_question', `<span class="str">"${q.answer}"</span>`);
+  pushLog('coord', 'PATCH /questions', `id=${q.id}`, '200', 'c200');
+  renderConsole();
+}
+
+/* ============================================================
+   TICK — TTLs decrement; aging happens here
+   ============================================================ */
+setInterval(() => {
+  state.agents.forEach(a => { a.ttl = Math.max(0, a.ttl - 1); });
+  state.intents.forEach(i => { i.ttl = Math.max(0, i.ttl - 1); });
+  // expire intents whose TTL hits zero
+  const expired = state.intents.filter(i => i.ttl === 0);
+  expired.forEach(i => {
+    pushLog(i.agent, 'intent.expired', `scope=<span class="str">"${i.scope}"</span>`, '', '');
+  });
+  state.intents = state.intents.filter(i => i.ttl > 0);
+  // sync agent ttls so chip + node match
+  state.agents.forEach(a => {
+    const i = state.intents.find(x => x.agent === a.id);
+    if (i) a.ttl = i.ttl;
+    else if (a.ttl === 0) {
+      // re-claim with a new scope so demo keeps living
+      const used = new Set(state.intents.map(x => x.scope));
+      const s = SAMPLE_SCOPES.find(x => !used.has(x.scope)) || SAMPLE_SCOPES[0];
+      a.scope = s.scope; a.action = s.action; a.ttl = 480;
+      state.intents.push({ id: `i_${Date.now()}_${a.id}`, agent: a.id, scope: s.scope, action: s.action, ttl: 480 });
+      pushTranscript(a.id, 'claim_intent', `<span class="str">"${s.scope}"</span>`);
+    }
+  });
+  renderHero();
+  renderTopologyTtl();
+  renderIntents();
+}, 1000);
+
+/* ============================================================
+   AUTO PULSE — random events to keep things alive
+   ============================================================ */
+setInterval(() => {
+  if (state.agents.length === 0) return;
+  const r = Math.random();
+  if (r < 0.45)      injectDiscovery();
+  else if (r < 0.78) injectDecision();
+  else if (r < 0.92) injectQuestion();
+  else               injectConflict();
+}, 5200);
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function rerender() {
+  renderHero();
+  renderTopology();
+  renderConsole();
+}
+
+function renderHero() {
+  const agentsEl = document.getElementById('hl-agents');
+  const existing = new Map();
+  agentsEl.querySelectorAll('[data-chip-id]').forEach(el => existing.set(el.dataset.chipId, el));
+
+  // remove chips for agents no longer present
+  for (const [id, el] of existing) {
+    if (!state.agents.find(a => a.id === id)) el.remove();
+  }
+  // add or update chips
+  state.agents.forEach(a => {
+    let el = existing.get(a.id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'agent-chip';
+      el.dataset.chipId = a.id;
+      agentsEl.appendChild(el);
+    }
+    el.style.setProperty('--c', a.color);
+    el.innerHTML = `
+      <span class="dot" style="background:${a.color}"></span>
+      <span class="id" style="color:${a.color}">${a.id}</span>
+      <span class="scope">${a.scope}</span>
+      <span class="ttl">${fmtTtl(a.ttl)}</span>
+      <span class="x" data-disconnect="${a.id}">×</span>
+    `;
+  });
+
+  document.getElementById('hl-agent-count').textContent = state.agents.length;
+  document.getElementById('hl-event-count').textContent = EVT;
+  document.getElementById('hl-now').textContent = fmtTime();
+
+  // hook up disconnect chip × buttons
+  agentsEl.querySelectorAll('[data-disconnect]').forEach(b => {
+    b.onclick = (e) => { e.stopPropagation(); disconnectAgent(b.dataset.disconnect); };
+  });
+}
+
+/* topology — radial layout for N agents */
+function renderTopology() {
+  const stage = document.getElementById('topo-stage');
+  const svg   = document.getElementById('topo-svg');
+
+  const stageW = stage.clientWidth || 1100;
+  const stageH = 480;
+  const cx = stageW / 2;
+  const cy = stageH / 2;
+
+  // remove disappeared nodes
+  const present = new Set(state.agents.map(a => a.id));
+  stage.querySelectorAll('[data-agent-id]').forEach(el => {
+    if (!present.has(el.dataset.agentId)) el.remove();
+  });
+
+  const positions = computeRadialPositions(state.agents.length, cx, cy, Math.min(stageW * 0.4, 380));
+
+  // create / update nodes
+  state.agents.forEach((a, i) => {
+    const pos = positions[i];
+    let node = stage.querySelector(`[data-agent-id="${a.id}"]`);
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'node';
+      node.dataset.agentId = a.id;
+      stage.appendChild(node);
+    }
+    node.style.left = `${pos.x}px`;
+    node.style.top  = `${pos.y}px`;
+    node.style.borderColor = `${a.color}33`;
+    node.innerHTML = `
+      <div class="node-head">
+        <span class="node-dot" style="background:${a.color}; box-shadow: 0 0 0 3px ${a.color}1a;"></span>
+        <span class="node-id">${a.id}</span>
+        <span class="node-tag">stdio · MCP</span>
+        <span class="node-disconnect" data-disconnect-node="${a.id}">×</span>
+      </div>
+      <div class="node-rows">
+        <div class="node-row"><span class="k">scope</span><span class="v scope" style="color:${a.color}">${a.scope}</span></div>
+        <div class="node-row"><span class="k">intent</span><span class="v ttl ${a.ttl < 60 ? 'warn' : ''}">${fmtTtl(a.ttl)}</span></div>
+        <div class="node-row"><span class="k">tx</span><span class="v">#${a.tx}</span></div>
+      </div>
+    `;
+    node.querySelector('[data-disconnect-node]').onclick = (e) => {
+      e.stopPropagation();
+      disconnectAgent(a.id);
+    };
+  });
+
+  // redraw SVG paths
+  svg.setAttribute('viewBox', `0 0 ${stageW} ${stageH}`);
+  let svgInner = '';
+  let particles = '';
+  state.agents.forEach((a, i) => {
+    const p = positions[i];
+    // start point: edge of node toward center
+    const dx = cx - p.x, dy = cy - p.y;
+    const len = Math.hypot(dx, dy);
+    const nx = dx / len, ny = dy / len;
+    // node radius rough — half its width:
+    const startX = p.x + nx * 96;
+    const startY = p.y + ny * 36;
+    const endX   = cx - nx * 70;
+    const endY   = cy - ny * 70;
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2 - 12;
+    const id = `path-${i}`;
+    svgInner += `<path id="${id}" d="M ${startX} ${startY} Q ${midX} ${midY} ${endX} ${endY}" stroke="${cssVar(a.color)}" stroke-opacity="0.22" stroke-width="1" fill="none" stroke-dasharray="3 4"/>`;
+    particles += `<circle r="3" fill="${cssVar(a.color)}"><animateMotion dur="${2.4 + i * 0.3}s" repeatCount="indefinite" begin="${i * 0.4}s"><mpath href="#${id}"/></animateMotion></circle>`;
+  });
+  svg.innerHTML = svgInner + particles;
+
+  // counters
+  document.getElementById('topo-connected').textContent =
+    `${state.agents.length} agent${state.agents.length === 1 ? '' : 's'}`;
+}
+
+function renderTopologyTtl() {
+  state.agents.forEach(a => {
+    const node = document.querySelector(`[data-agent-id="${a.id}"]`);
+    if (!node) return;
+    const ttlEl = node.querySelector('.v.ttl');
+    if (ttlEl) {
+      ttlEl.textContent = fmtTtl(a.ttl);
+      ttlEl.classList.toggle('warn', a.ttl < 60);
+    }
+  });
+}
+
+/* console — render all four stores from state */
+function renderConsole() {
+  renderIntents();
+  renderDecisions();
+  renderDiscoveries();
+  renderQuestions();
+}
+function renderIntents() {
+  const el = document.getElementById('rows-intents');
+  const ints = state.intents.slice().sort((a,b) => b.ttl - a.ttl);
+  el.innerHTML = ints.map(i => {
+    const ratio = Math.max(0, Math.min(1, i.ttl / 600));
+    const warn = i.ttl < 60;
+    return `
+      <div class="row">
+        <div class="row-meta">
+          <span class="agent" style="color:${agentColor(i.agent)}">
+            <span style="background:${agentColor(i.agent)}; width:5px; height:5px; border-radius:50%; display:inline-block; margin-right:5px;"></span>${i.agent}
+          </span>
+          <span class="ttl ${warn ? 'warn' : ''}">${fmtTtl(i.ttl)}</span>
+        </div>
+        <div class="row-content"><span class="path">${i.scope}</span> <span class="eq">·</span> <span class="k">${i.action}</span></div>
+        <div class="ttl-bar"><span class="${warn ? 'warn' : ''}" style="width:${ratio * 100}%"></span></div>
+      </div>
+    `;
+  }).join('') || `<div style="font-family:var(--mono); font-size:11px; color:var(--ink-3); padding:14px 0; font-style:italic;">no active intents · agents are idle</div>`;
+  document.getElementById('count-intents').textContent = `${state.intents.length} active`;
+}
+function renderDecisions() {
+  const el = document.getElementById('rows-decisions');
+  el.innerHTML = state.decisions.slice(0, 4).map(d => `
+    <div class="row" id="dec-${d.id}">
+      <div class="row-meta">
+        <span class="agent" style="color:${agentColor(d.agent)}">
+          <span style="background:${agentColor(d.agent)}; width:5px; height:5px; border-radius:50%; display:inline-block; margin-right:5px;"></span>${d.agent}
+        </span>
+        <span class="seq">#${String(d.seq).padStart(4,'0')}</span>
+        <span class="ts">${timeAgo(d.ts)}</span>
+      </div>
+      <div class="row-content"><span class="k">${d.key}</span><span class="eq">=</span><span class="v">${d.value}</span></div>
+    </div>
+  `).join('') || `<div style="font-family:var(--mono); font-size:11px; color:var(--ink-3); padding:14px 0; font-style:italic;">no decisions yet</div>`;
+  document.getElementById('count-decisions').textContent = `${state.decisions.length} locked`;
+}
+function renderDiscoveries() {
+  const el = document.getElementById('rows-discoveries');
+  el.innerHTML = state.discoveries.slice(0, 4).map(d => `
+    <div class="row" id="fact-${d.id}">
+      <div class="row-meta">
+        <span class="agent" style="color:${agentColor(d.agent)}">
+          <span style="background:${agentColor(d.agent)}; width:5px; height:5px; border-radius:50%; display:inline-block; margin-right:5px;"></span>${d.agent}
+        </span>
+        <span class="ts">${timeAgo(d.ts)}</span>
+      </div>
+      <div class="row-content"><span class="path">${d.scope}</span> <span class="eq">·</span> ${d.summary}</div>
+    </div>
+  `).join('') || `<div style="font-family:var(--mono); font-size:11px; color:var(--ink-3); padding:14px 0; font-style:italic;">no discoveries yet</div>`;
+  document.getElementById('count-discoveries').textContent = `${state.discoveries.length} cached`;
+}
+function renderQuestions() {
+  const el = document.getElementById('rows-questions');
+  el.innerHTML = state.questions.slice(0, 3).map(q => {
+    if (q.answered) {
+      return `
+        <div class="row q" id="q-${q.id}">
+          <div class="row-meta">
+            <span class="agent" style="color:${agentColor(q.agent)}">
+              <span style="background:${agentColor(q.agent)}; width:5px; height:5px; border-radius:50%; display:inline-block; margin-right:5px;"></span>${q.agent}
+            </span>
+            <span class="ts">resolved · ${timeAgo(q.ts)}</span>
+          </div>
+          <div class="row-content" style="color:var(--ink-3)">
+            ${q.asks}<br/>
+            <span style="color:var(--decision); font-size:10.5px; font-family:var(--mono)">↳ ${q.answer}</span>
+          </div>
+        </div>
+      `;
+    }
+    return `
+      <div class="row q" id="q-${q.id}">
+        <div class="row-meta">
+          <span class="agent" style="color:${agentColor(q.agent)}">
+            <span style="background:${agentColor(q.agent)}; width:5px; height:5px; border-radius:50%; display:inline-block; margin-right:5px;"></span>${q.agent}
+          </span>
+          ${q.blocking ? '<span class="badge">blocking</span>' : ''}
+          <span class="ts">${timeAgo(q.ts)}</span>
+        </div>
+        <div class="row-content">${q.asks}</div>
+        <button class="answer-cta" data-answer="${q.id}">↳ answer →</button>
+      </div>
+    `;
+  }).join('') || `<div style="font-family:var(--mono); font-size:11px; color:var(--ink-3); padding:14px 0; font-style:italic;">inbox clean</div>`;
+
+  const open = state.questions.filter(q => !q.answered).length;
+  document.getElementById('count-questions').textContent = `${open} waiting`;
+
+  el.querySelectorAll('[data-answer]').forEach(b => {
+    b.onclick = () => {
+      answerQuestion(b.dataset.answer, 'resolved');
+    };
+  });
+}
+function flashRow(id) {
+  setTimeout(() => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('flash');
+  }, 20);
+}
+
+/* ============================================================
+   TRANSCRIPT + LOG
+   ============================================================ */
+function pushTranscript(src, verb, arg) {
+  EVT++;
+  const entry = { ts: fmtTime(), src, verb, arg };
+  state.transcript.push(entry);
+  const body = document.getElementById('hl-body');
+  const line = document.createElement('div');
+  line.className = 'tline';
+  const color = src === 'coord' ? 'var(--accent)' : agentColor(src);
+  line.innerHTML = `
+    <span class="ts">${entry.ts}</span>
+    <span class="src" style="color:${color}">${src}</span>
+    <span class="verb">${verb}</span>
+    <span class="arg">${arg}</span>
+  `;
+  body.appendChild(line);
+  while (body.children.length > 9) body.removeChild(body.firstChild);
+  document.getElementById('hl-event-count').textContent = EVT;
+}
+function pushLog(src, verb, arg, code, codeCls) {
+  const body = document.getElementById('log-body');
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  const colorMap = {
+    'claude-code': '#A78BFA',
+    'cursor':      '#34D399',
+    'aider':       '#FBA571',
+    'roo':         '#F87171',
+    'continue':    '#FBBF24',
+    'cline':       '#60A5FA',
+    'coord':       '#00E5B0',
+  };
+  const color = colorMap[src] || 'rgba(255,255,255,0.7)';
+  line.innerHTML = `
+    <span class="ts">${fmtTime()}.${String(Math.floor(Math.random() * 1000)).padStart(3,'0')}</span>
+    <span class="src" style="color:${color}">${src}</span>
+    <span class="verb">${verb}</span>
+    <span class="arg">${arg}${code ? ` <span class="pill ${codeCls}">${code}</span>` : ''}</span>
+  `;
+  body.appendChild(line);
+  while (body.children.length > 10) body.removeChild(body.firstChild);
+}
+
+/* ============================================================
+   UTILS
+   ============================================================ */
+function timeAgo(date) {
+  const sec = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (sec < 5) return 'just now';
+  if (sec < 60) return `${sec}s ago`;
+  const m = Math.floor(sec / 60);
+  return `${m}m ago`;
+}
+function computeRadialPositions(n, cx, cy, r) {
+  if (n === 0) return [];
+  if (n === 1) return [{ x: cx - r, y: cy }];
+  if (n === 2) return [{ x: cx - r, y: cy }, { x: cx + r, y: cy }];
+  // 3+ → evenly spaced, starting from left, going clockwise
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const angle = Math.PI + (i * 2 * Math.PI) / n;
+    out.push({
+      x: cx + Math.cos(angle) * r,
+      y: cy + Math.sin(angle) * r,
+    });
+  }
+  return out;
+}
+function cssVar(v) {
+  // resolve a CSS variable like 'var(--agent-a)' to its value
+  if (!v.startsWith('var(')) return v;
+  const name = v.slice(4, -1);
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#000';
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+document.getElementById('hdr-add').onclick   = () => connectAgent();
+document.getElementById('topo-add').onclick  = () => connectAgent();
+document.getElementById('topo-decide').onclick   = injectDecision;
+document.getElementById('topo-conflict').onclick = injectConflict;
+
+// seed: 2 agents + a few entries
+connectAgent('claude-code');
+connectAgent('cursor');
+[...Array(3)].forEach(() => injectDecision());
+[...Array(3)].forEach(() => injectDiscovery());
+injectQuestion();
+
+// re-layout topology if window resized
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderTopology, 120);
+});
+</script>
+</body>
+</html>

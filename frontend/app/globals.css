@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: #0A0A0A;
+  color: #E5E5E5;
+  height: 100%;
+}
+
+/* Subtle scrollbar that doesn't fight the dark theme. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #262626; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+
+/* Minimal focus ring tweak — accessibility without a halo of blue. */
+:focus-visible {
+  outline: 2px solid #6E56CF;
+  outline-offset: 2px;
+}
