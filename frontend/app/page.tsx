@@ -2,18 +2,19 @@
 
 import { useCoord } from '@/lib/store';
 import { useCoordSocket } from '@/lib/ws-client';
-import { StatePanel } from '@/components/StatePanel';
-import { ActivityFeed } from '@/components/ActivityFeed';
-import { InboxPanel } from '@/components/InboxPanel';
-import { TopBar } from '@/components/TopBar';
 import { useEffect, useState } from 'react';
+import { TopHeader } from '@/components/TopHeader';
+import { SpatialCanvas } from '@/components/SpatialCanvas';
+import { AgentRoster } from '@/components/AgentRoster';
+import { ActivityLogs } from '@/components/ActivityLogs';
 
 export default function Page() {
-  // Mount the WebSocket once. Store handles everything from here.
   useCoordSocket();
 
   const connected = useCoord((s) => s.connected);
   const [demoMode, setDemoMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<'canvas' | 'roster' | 'logs'>('canvas');
+  const [animationsEnabled, setAnimationsEnabled] = useState(true);
 
   useEffect(() => {
     const isDemo = new URLSearchParams(window.location.search).get('demo') === '1';
@@ -21,21 +22,28 @@ export default function Page() {
   }, []);
 
   return (
-    <main className="h-screen w-screen flex flex-col bg-bg text-text">
-      <TopBar connected={connected} demoMode={demoMode} />
-      <div
-        className="flex-1 grid gap-px bg-border overflow-hidden"
-        style={{ gridTemplateColumns: '30% 40% 30%' }}
-      >
-        <section className="bg-bg overflow-hidden flex flex-col">
-          <StatePanel />
-        </section>
-        <section className="bg-bg overflow-hidden flex flex-col">
-          <ActivityFeed />
-        </section>
-        <section className="bg-bg overflow-hidden flex flex-col">
-          <InboxPanel />
-        </section>
+    <main className="h-screen w-screen flex flex-col bg-bg text-text overflow-hidden selection:bg-indigo-100 font-sans">
+      <TopHeader 
+        connected={connected} 
+        demoMode={demoMode} 
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        animationsEnabled={animationsEnabled}
+        setAnimationsEnabled={setAnimationsEnabled}
+      />
+      
+      <div className="flex-1 relative w-full h-full overflow-hidden">
+        {activeTab === 'canvas' && <SpatialCanvas animationsEnabled={animationsEnabled} />}
+        {activeTab === 'roster' && (
+          <div className="absolute inset-0 overflow-y-auto p-6 scrollbar-thin">
+            <AgentRoster />
+          </div>
+        )}
+        {activeTab === 'logs' && (
+          <div className="absolute inset-0 overflow-y-auto p-6 scrollbar-thin">
+            <ActivityLogs />
+          </div>
+        )}
       </div>
     </main>
   );

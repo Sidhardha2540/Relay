@@ -1,25 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
+  color-scheme: light;
+  --bg: #FAF7F2;
+  --surface: #FFFFFF;
+  --border: #EAE6DC;
+  --border2: #D4CFC4;
+  --muted: #8A837A;
+  --subtle: #B5B0A8;
+  --text: #3A3631;
+}
+
+.dark {
   color-scheme: dark;
+  --bg: #0F172A;
+  --surface: #1E293B;
+  --border: #334155;
+  --border2: #475569;
+  --muted: #94A3B8;
+  --subtle: #64748B;
+  --text: #F8FAFC;
 }
 
 html, body {
-  background: #0A0A0A;
-  color: #E5E5E5;
+  background: var(--bg);
+  color: var(--text);
   height: 100%;
 }
 
-/* Subtle scrollbar that doesn't fight the dark theme. */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #262626; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+::-webkit-scrollbar-thumb { background: #EAE6DC; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #D4CFC4; }
 
-/* Minimal focus ring tweak — accessibility without a halo of blue. */
+/* Minimal focus ring */
 :focus-visible {
-  outline: 2px solid #6E56CF;
+  outline: 2px solid #6366F1;
   outline-offset: 2px;
+}
+
+@layer utilities {
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
 }

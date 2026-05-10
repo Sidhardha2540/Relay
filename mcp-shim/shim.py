@@ -2,10 +2,15 @@
 
 Each agent's IDE config spawns this file as a stdio MCP server. The shim:
   1. Reads its identity from $COORD_AGENT_ID (e.g., "claude-code", "cursor").
-  2. Exposes the 8 Coord tools as MCP tools.
+  2. Exposes the 9 Coord tools as MCP tools (register is tool #1).
   3. Proxies every call to the daemon's HTTP API at $COORD_BASE_URL.
   4. Returns the daemon's response verbatim — including conflict codes —
-     so the agent sees real 409/410/423 semantics, not a sanitized success.
+     so the agent sees real 400/403/409/410/423/429 semantics.
+
+IMPORTANT — call order:
+  Call `register` first, before any other tool.  The daemon enforces scope
+  ownership: unregistered agents receive 400 from mutation endpoints and 403
+  from scope-protected endpoints.
 
 Why per-agent processes:
   MCP is stdio-based. A single MCP server can serve only one client at a time.
@@ -74,30 +79,120 @@ def _ok(payload: dict) -> list[TextContent]:
 
 
 # ----------------------------------------------------------------------
-# Tool catalog
+# Tool catalog  (register is FIRST — agents must call it before others)
 # ----------------------------------------------------------------------
 
 TOOLS: list[Tool] = [
+    # ------------------------------------------------------------------ #1
+    Tool(
+        name="register",
+        description=(
+            "Register this agent with the Coord daemon before calling any other tool. "
+            "Declares the task, the URI scopes this agent will write to, "
+            "its coordination mode (exclusive/collaborative), and optional "
+            "rate/payload limits.\n\n"
+            "Returns 200 on success. Returns 409 if an exclusive scope overlap "
+            "exists with another registered agent (a non-blocking Question is "
+            "auto-raised for the human). "
+            "All mutation endpoints return 400 until register is called."
+        ),
+        inputSchema={
+            "type": "object",
+            "required": ["task", "scope"],
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Human-readable description of what this agent is doing.",
+                },
+                "scope": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "List of URI scopes this agent owns. "
+                        "File paths: 'src/auth/', 'src/api/middleware.ts'. "
+                        "Virtual: 'virt://db/schema', 'virt://cloud/aws/s3'."
+                    ),
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["agent", "human"],
+                    "default": "agent",
+                    "description": "Whether this participant is an agent or a human.",
+                },
+                "role_tag": {
+                    "type": "string",
+                    "description": "Optional label e.g. 'coder', 'reviewer', 'planner'.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["exclusive", "collaborative"],
+                    "default": "exclusive",
+                    "description": (
+                        "exclusive — this agent is the sole owner of its scopes; "
+                        "overlapping registrations are blocked. "
+                        "collaborative — writes outside owned scopes are logged but allowed."
+                    ),
+                },
+                "limits": {
+                    "type": "object",
+                    "description": "Optional rate and payload limits.",
+                    "properties": {
+                        "max_calls_per_min": {
+                            "type": "integer",
+                            "default": 20,
+                            "description": "Max daemon calls per 60 s before 429.",
+                        },
+                        "max_state_size_kb": {
+                            "type": "integer",
+                            "default": 100,
+                            "description": "Max read_state response size in KB before truncation.",
+                        },
+                        "alert_threshold": {
+                            "type": "number",
+                            "default": 0.8,
+                            "description": "Warn when payload reaches this fraction of the limit.",
+                        },
+                    },
+                },
+            },
+        },
+    ),
+    # ------------------------------------------------------------------ #2
     Tool(
         name="read_state",
         description=(
             "Snapshot of all four shared stores: decisions, discoveries, "
-            "intents, questions. Pass `scope_filter` to narrow. Call this at "
-            "the start of any non-trivial task."
+            "intents, questions. Pass `scope_filter` to narrow results. "
+            "Pass `since_id` (the current_id from a prior call) to get only "
+            "records newer than that point — reduces context window growth. "
+            "Call this at the start of any non-trivial task."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "scope_filter": {"type": "string"},
+                "scope_filter": {
+                    "type": "string",
+                    "description": "Narrow results to this scope prefix.",
+                },
+                "since_id": {
+                    "type": "integer",
+                    "description": (
+                        "Return only records with sequence > since_id. "
+                        "Use the current_id value from a previous read_state response. "
+                        "Omit for a full snapshot."
+                    ),
+                },
             },
         },
     ),
+    # ------------------------------------------------------------------ #3
     Tool(
         name="claim_intent",
         description=(
             "Claim a TTL lease on a scope before working on it. Returns 423 "
             "if another agent already holds an overlapping scope. Returns "
-            "429 if you have too many active intents (release one first)."
+            "429 if you have too many active intents (release one first). "
+            "Returns 403 if scope is not owned by this agent (exclusive mode)."
         ),
         inputSchema={
             "type": "object",
@@ -109,6 +204,7 @@ TOOLS: list[Tool] = [
             },
         },
     ),
+    # ------------------------------------------------------------------ #4
     Tool(
         name="release_intent",
         description="Release an active intent. Only the owning agent can release.",
@@ -118,12 +214,13 @@ TOOLS: list[Tool] = [
             "properties": {"intent_id": {"type": "string"}},
         },
     ),
+    # ------------------------------------------------------------------ #5
     Tool(
         name="commit_decision",
         description=(
-            "Record a contract (FWW). Returns 409 if a different value already "
-            "exists for the same scope::key. On 409, raise a question — do not "
-            "retry automatically."
+            "Record a contract (First-Write-Wins). Returns 409 if a different "
+            "value already exists for the same scope::key — on 409, raise a "
+            "question instead of retrying. Returns 403 if scope not owned."
         ),
         inputSchema={
             "type": "object",
@@ -132,15 +229,21 @@ TOOLS: list[Tool] = [
                 "scope": {"type": "string"},
                 "key": {"type": "string"},
                 "value": {"type": "string"},
+                "anchor": {
+                    "type": "string",
+                    "description": "Optional link to a prior decision or rationale document.",
+                },
                 "rationale": {"type": "string"},
             },
         },
     ),
+    # ------------------------------------------------------------------ #6
     Tool(
         name="share_discovery",
         description=(
-            "Share an observation about the codebase (LWW). Includes file_hash "
-            "so peers can detect when this discovery becomes stale."
+            "Share an observation about the codebase (Last-Write-Wins). "
+            "Include file_hash so peers can detect when this discovery becomes "
+            "stale. Returns 403 if scope not owned (exclusive mode)."
         ),
         inputSchema={
             "type": "object",
@@ -156,11 +259,13 @@ TOOLS: list[Tool] = [
             },
         },
     ),
+    # ------------------------------------------------------------------ #7
     Tool(
         name="raise_question",
         description=(
             "Escalate a blocker to the human (target='human') or another "
-            "agent. Use blocking=true if you cannot proceed without an answer."
+            "agent. Use blocking=true if you cannot proceed without an answer. "
+            "Questions are exempt from scope enforcement — any agent may raise one."
         ),
         inputSchema={
             "type": "object",
@@ -173,6 +278,7 @@ TOOLS: list[Tool] = [
             },
         },
     ),
+    # ------------------------------------------------------------------ #8
     Tool(
         name="answer_question",
         description="Answer an open question. The question moves to 'answered' status.",
@@ -185,6 +291,7 @@ TOOLS: list[Tool] = [
             },
         },
     ),
+    # ------------------------------------------------------------------ #9
     Tool(
         name="resolve_question",
         description="Mark a question fully resolved. Final close.",
@@ -205,10 +312,34 @@ TOOLS: list[Tool] = [
 # ----------------------------------------------------------------------
 
 async def call_tool(name: str, args: dict[str, Any]) -> list[TextContent]:
+
+    # ---- register (NEW — must be called first) ------------------------
+    if name == "register":
+        body: dict[str, Any] = {
+            "agent_id": AGENT_ID,
+            "type": args.get("type", "agent"),
+            "task": args["task"],
+            "scope": args["scope"],
+        }
+        if "role_tag" in args:
+            body["role_tag"] = args["role_tag"]
+        if "mode" in args:
+            body["mode"] = args["mode"]
+        if "limits" in args:
+            body["limits"] = args["limits"]
+        return _ok(await _request("POST", "/api/register", body))
+
+    # ---- read_state ---------------------------------------------------
     if name == "read_state":
         scope = args.get("scope_filter")
-        path = "/api/state" + (f"?scope={scope}" if scope else "")
-        return _ok(await _request("GET", path))
+        since_id = args.get("since_id")
+        parts = []
+        if scope:
+            parts.append(f"scope={scope}")
+        if since_id is not None:
+            parts.append(f"since_id={since_id}")
+        qs = ("?" + "&".join(parts)) if parts else ""
+        return _ok(await _request("GET", f"/api/state{qs}"))
 
     if name == "claim_intent":
         return _ok(await _request("POST", "/api/intents", {
@@ -227,6 +358,7 @@ async def call_tool(name: str, args: dict[str, Any]) -> list[TextContent]:
             "scope": args["scope"],
             "key": args["key"],
             "value": args["value"],
+            "anchor": args.get("anchor"),
             "rationale": args.get("rationale"),
         }))
 

@@ -29,13 +29,47 @@ export function timeUntil(iso: string, from: number = Date.now()): string {
   return `${m}m ${s.toString().padStart(2, '0')}s`;
 }
 
-export function agentColor(agent: string | null | undefined): string {
-  switch (agent) {
-    case 'claude-code':
-    case 'claude':       return 'text-claude';
-    case 'cursor':       return 'text-cursor';
-    case 'aider':        return 'text-aider';
-    case 'human':        return 'text-human';
-    default:             return 'text-muted';
+const AGENT_COLORS = {
+  'claude-code': '#6366F1', // indigo
+  'claude': '#6366F1',
+  'cursor': '#14B8A6', // teal
+  'aider': '#059669', // emerald
+  'human': '#F43F5E', // rose
+  'antigravity': '#06B6D4', // cyan
+};
+
+const AGENT_STYLES = {
+  'claude-code': 'nerd',
+  'claude': 'nerd',
+  'cursor': 'visor',
+  'aider': 'mustache',
+  'antigravity': 'mustache',
+  'human': 'coffee',
+};
+
+export function agentColorClass(agent: string | null | undefined): string {
+  if (!agent) return 'text-muted';
+  if (agent in AGENT_COLORS) return `text-${agent}`;
+  return 'text-indigo-500'; // fallback
+}
+
+export function agentHexColor(agent: string | null | undefined): string {
+  if (!agent) return '#8A837A'; // muted
+  const key = Object.keys(AGENT_COLORS).find(k => agent.toLowerCase().includes(k));
+  if (key) return AGENT_COLORS[key as keyof typeof AGENT_COLORS];
+  
+  // deterministic hex from string
+  let hash = 0;
+  for (let i = 0; i < agent.length; i++) {
+    hash = agent.charCodeAt(i) + ((hash << 5) - hash);
   }
+  const color = Math.floor(Math.abs((Math.sin(hash) * 10000) % 1 * 16777215)).toString(16);
+  return '#' + color.padStart(6, '0');
+}
+
+export function agentStyle(agent: string | null | undefined): 'nerd' | 'visor' | 'mustache' | 'coffee' | 'robot' {
+  if (!agent) return 'robot';
+  const key = Object.keys(AGENT_STYLES).find(k => agent.toLowerCase().includes(k));
+  if (key) return AGENT_STYLES[key as keyof typeof AGENT_STYLES] as any;
+  return 'robot';
 }

@@ -44,9 +44,38 @@ async def init_storage() -> None:
     await _db.executescript(schema)
     await _db.commit()
 
+    # Apply column migrations that cannot use IF NOT EXISTS in raw SQL.
+    await _apply_migrations()
+
     # Ensure log file exists so tail -f works immediately.
     config.LOG_PATH.touch(exist_ok=True)
     config.INBOX_PATH.touch(exist_ok=True)
+
+
+async def _apply_migrations() -> None:
+    """Idempotently add new columns to existing tables.
+
+    SQLite does not support ALTER TABLE … ADD COLUMN IF NOT EXISTS, so we
+    probe PRAGMA table_info() first and skip any column already present.
+    Safe to run on every startup — no-op after the first run.
+    """
+    # (table, column_name, column_definition)
+    migrations = [
+        ("decisions",   "anchor",   "TEXT"),
+        ("decisions",   "mode",     "TEXT DEFAULT 'exclusive'"),
+        ("intents",     "mode",     "TEXT DEFAULT 'exclusive'"),
+        ("discoveries", "sequence", "INTEGER DEFAULT 0"),
+        ("intents",     "sequence", "INTEGER DEFAULT 0"),
+        ("questions",   "sequence", "INTEGER DEFAULT 0"),
+    ]
+    conn = db()
+    for table, col, defn in migrations:
+        cur = await conn.execute(f"PRAGMA table_info({table})")
+        existing_cols = {row["name"] for row in await cur.fetchall()}
+        await cur.close()
+        if col not in existing_cols:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+    await conn.commit()
 
 
 async def close_storage() -> None:

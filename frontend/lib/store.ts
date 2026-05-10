@@ -37,6 +37,7 @@ interface CoordState {
   answerQuestion: (id: string, answer: string) => Promise<void>;
   resolveQuestion: (id: string, resolution: string) => Promise<void>;
   replayDemo: () => Promise<void>;
+  clearAll: () => void;
 }
 
 const COORD_HTTP =
@@ -153,15 +154,52 @@ export const useCoord = create<CoordState>((set, get) => ({
       }
 
       switch (env.event) {
-        case 'state_snapshot':
+        case 'state_snapshot': {
+          const reconstructedFeed: FeedItem[] = [
+            ...env.data.decisions.map(d => ({
+              id: `dec-${d.scope}-${d.key}-${d.sequence}`,
+              kind: 'decision' as const,
+              agent: d.agent,
+              scope: d.scope,
+              summary: `${d.key} = ${d.value}`,
+              ts: d.created_at,
+            })),
+            ...env.data.discoveries.map(d => ({
+              id: d.id,
+              kind: 'discovery' as const,
+              agent: d.agent,
+              scope: d.scope,
+              summary: d.summary,
+              ts: d.created_at,
+            })),
+            ...env.data.intents.map(i => ({
+              id: i.id,
+              kind: 'intent' as const,
+              agent: i.agent,
+              scope: i.scope,
+              summary: `claimed: ${i.action}`,
+              ts: i.created_at,
+              meta: { expires_at: i.expires_at }
+            })),
+            ...env.data.questions.map(q => ({
+              id: q.id,
+              kind: 'question' as const,
+              agent: q.asker_agent,
+              scope: q.scope,
+              summary: q.asks,
+              ts: q.created_at,
+            }))
+          ].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, FEED_CAP);
+
           return {
             decisions: env.data.decisions,
             discoveries: env.data.discoveries,
             intents: env.data.intents,
             questions: env.data.questions,
-            feed: [], // start fresh on snapshot
+            feed: reconstructedFeed,
             serverTime: env.data.server_time,
           };
+        }
 
         case 'decision_committed':
           return {
@@ -249,5 +287,14 @@ export const useCoord = create<CoordState>((set, get) => ({
   },
   replayDemo: async () => {
     await postHuman('/api/_demo/replay', {});
+  },
+  clearAll: () => {
+    set({
+      decisions: [],
+      discoveries: [],
+      intents: [],
+      questions: [],
+      feed: []
+    });
   },
 }));

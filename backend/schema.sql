@@ -83,3 +83,30 @@ CREATE TABLE IF NOT EXISTS sequence_counter (
     value INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO sequence_counter (id, value) VALUES (1, 0);
+
+-- ----------------------------------------------------------------------
+-- Participants: agent/human registration, scope ownership, rate limits.
+-- Registered at session start via POST /api/register.
+-- ----------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS participants (
+  agent_id      TEXT PRIMARY KEY,
+  type          TEXT NOT NULL CHECK(type IN ('agent','human')),
+  task          TEXT NOT NULL,
+  scope         TEXT NOT NULL,   -- JSON array of URI strings e.g. ["src/auth/","virt://db"]
+  role_tag      TEXT,
+  mode          TEXT NOT NULL DEFAULT 'exclusive' CHECK(mode IN ('exclusive','collaborative')),
+  limits        TEXT NOT NULL DEFAULT '{}',   -- JSON: {max_calls_per_min, max_state_size_kb, alert_threshold}
+  registered_at TEXT NOT NULL
+);
+
+-- NOTE: The following ALTER TABLE statements cannot use IF NOT EXISTS in SQLite.
+-- They are applied safely at runtime by backend/storage.py::_apply_migrations()
+-- which probes PRAGMA table_info before executing each ALTER.
+--
+-- Columns being added:
+--   decisions.anchor  TEXT                        (FWW decision anchor / rationale link)
+--   decisions.mode    TEXT DEFAULT 'exclusive'    (reflects registering agent's mode)
+--   intents.mode      TEXT DEFAULT 'exclusive'    (reflects registering agent's mode)
+--   discoveries.sequence  INTEGER DEFAULT 0       (global monotonic counter for delta state)
+--   intents.sequence      INTEGER DEFAULT 0       (global monotonic counter for delta state)
+--   questions.sequence    INTEGER DEFAULT 0       (global monotonic counter for delta state)

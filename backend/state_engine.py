@@ -15,9 +15,12 @@ Conflict codes returned to callers:
   410 — Discovery hash mismatch (caller passed a stale hash)
   423 — Intent scope overlap (locked)
   202 — Question accepted but non-blocking (queued)
+  403 — Scope not owned by calling agent (exclusive mode)
 """
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
@@ -28,6 +31,8 @@ from .config import (
     MAX_ACTIVE_INTENTS_PER_AGENT,
 )
 from .models import now_iso
+
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------------------------------------------------
@@ -55,6 +60,59 @@ def _scopes_overlap(a: str, b: str) -> bool:
     )
 
 
+def _uri_scope_matches(registered: str, requested: str) -> bool:
+    """Does `registered` scope authorize access to `requested` scope?
+
+    Rules (apply to both file paths and virt:// URIs):
+    - Exact match always allowed.
+    - registered is a strict path-prefix of requested (path boundary = '/').
+    - src/auth/ owns src/auth/middleware.ts  ✓
+    - src/auth  owns src/auth/sub.ts         ✓  (trailing slash normalised)
+    - src/auth  does NOT own src/auth_helpers ✗
+    - virt://db owns virt://db/schema        ✓
+    """
+    reg = registered.rstrip("/")
+    req = requested.rstrip("/")
+    if reg == req:
+        return True
+    return req.startswith(reg + "/")
+
+
+# ----------------------------------------------------------------------
+# Scope permission check (NEW)
+# ----------------------------------------------------------------------
+
+async def check_scope_permission(agent_id: str, scope: str) -> tuple[bool, str]:
+    """Return (allowed, mode) for agent_id writing to scope.
+
+    Logic:
+    - Unregistered agent  → (False, "exclusive")  — always blocked
+    - Registered, scope owned                      → (True,  mode)
+    - Registered, scope NOT owned, exclusive mode  → (False, "exclusive")
+    - Registered, scope NOT owned, collaborative   → (False, "collaborative")
+      (caller logs and allows through — cooperative agents may write anywhere)
+    """
+    conn = storage.db()
+    cur = await conn.execute(
+        "SELECT scope, mode FROM participants WHERE agent_id = ?",
+        (agent_id,),
+    )
+    row = await cur.fetchone()
+    await cur.close()
+
+    if row is None:
+        return False, "exclusive"
+
+    registered_scopes: list[str] = json.loads(row["scope"])
+    mode: str = row["mode"]
+
+    for reg_scope in registered_scopes:
+        if _uri_scope_matches(reg_scope, scope):
+            return True, mode
+
+    return False, mode
+
+
 # ----------------------------------------------------------------------
 # DECISION — First-Write-Wins
 # ----------------------------------------------------------------------
@@ -64,6 +122,7 @@ async def commit_decision(
     key: str,
     value: str,
     agent: str,
+    anchor: str | None = None,
     rationale: str | None = None,
 ) -> dict[str, Any]:
     """Commit a contract. Existing value with a different value → 409 conflict.
@@ -71,8 +130,24 @@ async def commit_decision(
     Returns:
       {"status": "committed", "sequence": int} on first write
       {"status": "noop"}                       on idempotent re-write (same value)
+      {"status": "conflict", "code": 403, ...} scope not owned
       {"status": "conflict", "code": 409, ...} on different existing value
     """
+    allowed, mode = await check_scope_permission(agent, scope)
+    if not allowed:
+        if mode == "collaborative":
+            logger.info(
+                "commit_decision: agent %s writing outside owned scope %s "
+                "(collaborative mode — allowed)", agent, scope,
+            )
+        else:
+            return {
+                "status": "conflict",
+                "code": 403,
+                "detail": f"Agent '{agent}' is not registered or does not own scope '{scope}'.",
+                "required_action": "register_with_correct_scope",
+            }
+
     async with storage.transaction() as conn:
         cur = await conn.execute(
             "SELECT value, agent FROM decisions WHERE scope = ? AND key = ?",
@@ -103,22 +178,23 @@ async def commit_decision(
         seq = await storage.next_sequence()
         ts = now_iso()
         await conn.execute(
-            "INSERT INTO decisions (scope, key, value, agent, rationale, created_at, sequence) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (scope, key, value, agent, rationale, ts, seq),
+            "INSERT INTO decisions "
+            "(scope, key, value, agent, rationale, anchor, mode, created_at, sequence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (scope, key, value, agent, rationale, anchor, mode, ts, seq),
         )
         await conn.commit()
 
     log_entry = {
         "type": "decision_committed",
         "scope": scope, "key": key, "value": value,
-        "agent": agent, "rationale": rationale,
+        "agent": agent, "rationale": rationale, "anchor": anchor,
         "sequence": seq, "ts": ts,
     }
     await storage.append_log(log_entry)
     await ws_broadcast.publish("decision_committed", {
         "scope": scope, "key": key, "value": value,
-        "agent": agent, "rationale": rationale,
+        "agent": agent, "rationale": rationale, "anchor": anchor,
         "sequence": seq, "created_at": ts,
     })
     return {"status": "committed", "sequence": seq}
@@ -137,7 +213,26 @@ async def share_discovery(
 ) -> dict[str, Any]:
     """Share an observation. Older non-superseded entries on the same scope
     are flipped to superseded=1 (kept for audit, hidden from default reads).
+
+    Returns:
+      {"status": "shared", "id": str}         on success
+      {"status": "conflict", "code": 403, ...} scope not owned (exclusive)
     """
+    allowed, mode = await check_scope_permission(agent, scope)
+    if not allowed:
+        if mode == "collaborative":
+            logger.info(
+                "share_discovery: agent %s writing outside owned scope %s "
+                "(collaborative mode — allowed)", agent, scope,
+            )
+        else:
+            return {
+                "status": "conflict",
+                "code": 403,
+                "detail": f"Agent '{agent}' is not registered or does not own scope '{scope}'.",
+                "required_action": "register_with_correct_scope",
+            }
+
     discovery_id = _gen_id("disc")
     ts = now_iso()
 
@@ -156,11 +251,12 @@ async def share_discovery(
                 (scope,),
             )
 
+        seq = await storage.next_sequence()
         await conn.execute(
             "INSERT INTO discoveries "
-            "(id, scope, summary, file_hash, agent, confidence, created_at, superseded) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-            (discovery_id, scope, summary, file_hash, agent, confidence, ts),
+            "(id, scope, summary, file_hash, agent, confidence, created_at, superseded, sequence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            (discovery_id, scope, summary, file_hash, agent, confidence, ts, seq),
         )
         await conn.commit()
 
@@ -168,7 +264,7 @@ async def share_discovery(
         "type": "discovery_shared",
         "id": discovery_id, "scope": scope, "summary": summary,
         "file_hash": file_hash, "agent": agent, "confidence": confidence,
-        "superseded_ids": prior_ids, "ts": ts,
+        "superseded_ids": prior_ids, "sequence": seq, "ts": ts,
     }
     await storage.append_log(log_entry)
 
@@ -196,10 +292,26 @@ async def claim_intent(
     """Claim a working lease on a scope.
 
     Returns:
-      {"status": "claimed", "id": str, "expires_at": str}    on success
-      {"status": "conflict", "code": 423, "existing_lease":..} on overlap
-      {"status": "conflict", "code": 429, "active_count":..}   if agent at cap
+      {"status": "claimed", "id": str, "expires_at": str}      on success
+      {"status": "conflict", "code": 403, ...}                  scope not owned
+      {"status": "conflict", "code": 423, "existing_lease":..}  on overlap
+      {"status": "conflict", "code": 429, "active_count":..}    if agent at cap
     """
+    allowed, mode = await check_scope_permission(agent, scope)
+    if not allowed:
+        if mode == "collaborative":
+            logger.info(
+                "claim_intent: agent %s claiming outside owned scope %s "
+                "(collaborative mode — allowed)", agent, scope,
+            )
+        else:
+            return {
+                "status": "conflict",
+                "code": 403,
+                "detail": f"Agent '{agent}' is not registered or does not own scope '{scope}'.",
+                "required_action": "register_with_correct_scope",
+            }
+
     # GC first so callers see an honest picture.
     await gc_expired_intents()
 
@@ -269,17 +381,19 @@ async def claim_intent(
         expires_at = (
             datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
         ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        seq = await storage.next_sequence()
         await conn.execute(
-            "INSERT INTO intents (id, scope, action, agent, created_at, expires_at, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'active')",
-            (intent_id, scope, action, agent, ts, expires_at),
+            "INSERT INTO intents (id, scope, action, agent, mode, created_at, expires_at, status, sequence) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+            (intent_id, scope, action, agent, mode, ts, expires_at, seq),
         )
         await conn.commit()
 
     await storage.append_log({
         "type": "intent_claimed",
         "id": intent_id, "scope": scope, "action": action,
-        "agent": agent, "expires_at": expires_at, "ts": ts,
+        "agent": agent, "mode": mode, "expires_at": expires_at,
+        "sequence": seq, "ts": ts,
     })
     await ws_broadcast.publish("intent_claimed", {
         "id": intent_id, "scope": scope, "action": action,
@@ -367,14 +481,17 @@ async def raise_question(
     target: str = "human",
     blocking: bool = True,
 ) -> dict[str, Any]:
+    # raise_question is intentionally exempt from scope permission checks —
+    # it is a communication primitive, not a state mutation.
     qid = _gen_id("q")
     ts = now_iso()
     async with storage.transaction() as conn:
+        seq = await storage.next_sequence()
         await conn.execute(
             "INSERT INTO questions "
-            "(id, scope, asks, asker_agent, target, blocking, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 'open', ?)",
-            (qid, scope, asks, asker_agent, target, 1 if blocking else 0, ts),
+            "(id, scope, asks, asker_agent, target, blocking, status, created_at, sequence) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+            (qid, scope, asks, asker_agent, target, 1 if blocking else 0, ts, seq),
         )
         await conn.commit()
 
@@ -382,7 +499,7 @@ async def raise_question(
         "type": "question_raised",
         "id": qid, "scope": scope, "asks": asks,
         "asker_agent": asker_agent, "target": target, "blocking": blocking,
-        "ts": ts,
+        "sequence": seq, "ts": ts,
     })
     await ws_broadcast.publish("question_raised", {
         "id": qid, "scope": scope, "asks": asks,
@@ -468,58 +585,144 @@ async def resolve_question(
 # Read path
 # ----------------------------------------------------------------------
 
-async def get_state(scope_filter: str | None = None) -> dict[str, list[dict]]:
-    """Snapshot. Side-effect: GC expired intents."""
-    await gc_expired_intents()
+async def get_state(
+    scope_filter: str | None = None,
+    since_id: int | None = None,
+) -> dict[str, Any]:
+    """Snapshot or delta, depending on whether since_id is provided.
 
-    # Build WHERE clause. When filtering by scope we wrap the scope conditions
-    # in parentheses so that the AND for status/superseded binds correctly:
-    #   WHERE (scope = ? OR scope LIKE ?) AND superseded = 0
-    # Without parens, SQL operator precedence gives:
-    #   WHERE scope = ? OR (scope LIKE ? AND superseded = 0)   ← bug
-    scope_clause = ""
-    params: tuple = ()
-    if scope_filter:
-        scope_clause = "(scope = ? OR scope LIKE ?)"
-        params = (scope_filter, f"{scope_filter}/%")
+    Full snapshot (since_id is None or 0):
+      Returns all active records.  current_id is included so callers can
+      store it and pass it as since_id on the next call.
+
+    Delta (since_id > 0):
+      Returns only records whose sequence counter exceeds since_id.
+      Decisions use their own sequence column (monotonic, FWW-assigned).
+      Discoveries / Intents / Questions use the sequence column added by
+      _apply_migrations (DEFAULT 0; new rows get a global counter value).
+      Rows with sequence = 0 (pre-migration legacy rows) are returned in
+      full snapshots only — they are intentionally excluded from deltas.
+
+    Side-effect: GC expired intents.
+    """
+    await gc_expired_intents()
 
     conn = storage.db()
 
-    decisions_where = f"WHERE {scope_clause}" if scope_clause else ""
+    # Current global sequence value — included in every response.
+    cur = await conn.execute("SELECT value FROM sequence_counter WHERE id = 1")
+    row = await cur.fetchone()
+    await cur.close()
+    current_id: int = row["value"] if row else 0
+
+    # Determine whether we are doing a delta read.
+    delta = since_id is not None and since_id > 0
+
+    # Build scope WHERE clause.  We wrap scope conditions in parentheses so
+    # that AND for status/superseded binds correctly (see comment in original).
+    scope_clause = ""
+    scope_params: tuple = ()
+    if scope_filter:
+        scope_clause = "(scope = ? OR scope LIKE ?)"
+        scope_params = (scope_filter, f"{scope_filter}/%")
+
+    # ------------------------------------------------------------------
+    # Helper: assemble params list for queries that may have both scope
+    # and delta filters.
+    # ------------------------------------------------------------------
+    def _build(base_where: str, extra_clauses: list[str], extra_params: tuple) -> tuple[str, tuple]:
+        """Return (where_string, params_tuple).
+
+        base_where   — already-combined scope clause (may be empty)
+        extra_clauses — additional AND conditions (do not include AND keyword)
+        extra_params  — params matching the extra_clauses placeholders
+        """
+        all_clauses: list[str] = []
+        if base_where:
+            all_clauses.append(base_where)
+        all_clauses.extend(extra_clauses)
+
+        where = ("WHERE " + " AND ".join(all_clauses)) if all_clauses else ""
+        params = scope_params + extra_params
+        return where, params
+
+    # ------------------------------------------------------------------
+    # Decisions
+    # ------------------------------------------------------------------
+    if delta:
+        d_where, d_params = _build(scope_clause, ["sequence > ?"], (since_id,))
+    else:
+        d_where, d_params = _build(scope_clause, [], ())
+
     cur = await conn.execute(
-        f"SELECT * FROM decisions {decisions_where} ORDER BY sequence ASC", params
+        f"SELECT * FROM decisions {d_where} ORDER BY sequence ASC", d_params
     )
     decisions = [dict(r) for r in await cur.fetchall()]
     await cur.close()
 
-    disc_where = (
-        f"WHERE {scope_clause} AND superseded = 0" if scope_clause
-        else "WHERE superseded = 0"
-    )
+    # ------------------------------------------------------------------
+    # Discoveries
+    # ------------------------------------------------------------------
+    if delta:
+        disc_where, disc_params = _build(
+            scope_clause, ["superseded = 0", "sequence > ?"], (since_id,)
+        )
+    else:
+        disc_where, disc_params = _build(
+            scope_clause,
+            ["superseded = 0"] if not scope_clause else ["superseded = 0"],
+            (),
+        )
+        if not scope_clause:
+            disc_where = "WHERE superseded = 0"
+            disc_params = ()
+
     cur = await conn.execute(
-        f"SELECT * FROM discoveries {disc_where} ORDER BY created_at DESC", params
+        f"SELECT * FROM discoveries {disc_where} ORDER BY created_at DESC", disc_params
     )
     discoveries = [dict(r) for r in await cur.fetchall()]
     for d in discoveries:
         d["superseded"] = bool(d["superseded"])
     await cur.close()
 
-    intents_where = (
-        f"WHERE {scope_clause} AND status = 'active'" if scope_clause
-        else "WHERE status = 'active'"
-    )
+    # ------------------------------------------------------------------
+    # Intents
+    # ------------------------------------------------------------------
+    if delta:
+        i_where, i_params = _build(
+            scope_clause, ["status = 'active'", "sequence > ?"], (since_id,)
+        )
+    else:
+        i_where, i_params = _build(scope_clause, ["status = 'active'"], ())
+        if not scope_clause:
+            i_where = "WHERE status = 'active'"
+            i_params = ()
+
     cur = await conn.execute(
-        f"SELECT * FROM intents {intents_where} ORDER BY created_at DESC", params
+        f"SELECT * FROM intents {i_where} ORDER BY created_at DESC", i_params
     )
     intents = [dict(r) for r in await cur.fetchall()]
     await cur.close()
 
-    questions_where = (
-        f"WHERE {scope_clause} AND status IN ('open', 'answered')" if scope_clause
-        else "WHERE status IN ('open', 'answered')"
-    )
+    # ------------------------------------------------------------------
+    # Questions
+    # ------------------------------------------------------------------
+    if delta:
+        q_where, q_params = _build(
+            scope_clause,
+            ["status IN ('open', 'answered')", "sequence > ?"],
+            (since_id,),
+        )
+    else:
+        q_where, q_params = _build(
+            scope_clause, ["status IN ('open', 'answered')"], ()
+        )
+        if not scope_clause:
+            q_where = "WHERE status IN ('open', 'answered')"
+            q_params = ()
+
     cur = await conn.execute(
-        f"SELECT * FROM questions {questions_where} ORDER BY created_at DESC", params
+        f"SELECT * FROM questions {q_where} ORDER BY created_at DESC", q_params
     )
     questions = [dict(r) for r in await cur.fetchall()]
     # Coerce SQLite 0/1 to bool for clients.
@@ -527,33 +730,17 @@ async def get_state(scope_filter: str | None = None) -> dict[str, list[dict]]:
         q["blocking"] = bool(q["blocking"])
     await cur.close()
 
-    return {
+    result: dict[str, Any] = {
         "decisions": decisions,
         "discoveries": discoveries,
         "intents": intents,
         "questions": questions,
+        "current_id": current_id,
     }
+    if delta:
+        result["since_id"] = since_id
 
-
-# ----------------------------------------------------------------------
-# Internal: keep inbox.md in sync with the question table
-# ----------------------------------------------------------------------
-
-async def _refresh_inbox() -> None:
-    state = await get_state()
-    await storage.regenerate_inbox(state["questions"])
-= [dict(r) for r in await cur.fetchall()]
-    # Coerce SQLite 0/1 to bool for clients.
-    for q in questions:
-        q["blocking"] = bool(q["blocking"])
-    await cur.close()
-
-    return {
-        "decisions": decisions,
-        "discoveries": discoveries,
-        "intents": intents,
-        "questions": questions,
-    }
+    return result
 
 
 # ----------------------------------------------------------------------
