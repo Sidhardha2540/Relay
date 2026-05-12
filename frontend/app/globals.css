@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,46 +6,81 @@
 
 :root {
   color-scheme: light;
-  --bg: #FAF7F2;
-  --surface: #FFFFFF;
-  --border: #EAE6DC;
-  --border2: #D4CFC4;
-  --muted: #8A837A;
-  --subtle: #B5B0A8;
-  --text: #3A3631;
+  --bg: #fafaf8;
+  --surface: #ffffff;
+  --surface2: #f4f3f0;
+  --border: #e8e6e1;
+  --text: #1a1a1a;
+  --text-muted: #6b6b6b;
+
+  --online: #22c55e;
+  --idle: #f59e0b;
+  --offline: #cbd5e1;
+
+  --decision: #6366f1;
+  --intent: #f59e0b;
+  --discovery: #10b981;
+  --question: #f43f5e;
+  --system: #94a3b8;
 }
 
 .dark {
   color-scheme: dark;
-  --bg: #0F172A;
-  --surface: #1E293B;
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface2: #273548;
   --border: #334155;
-  --border2: #475569;
-  --muted: #94A3B8;
-  --subtle: #64748B;
-  --text: #F8FAFC;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+
+  --online: #22c55e;
+  --idle: #f59e0b;
+  --offline: #64748b;
+
+  --decision: #818cf8;
+  --intent: #fbbf24;
+  --discovery: #34d399;
+  --question: #fb7185;
+  --system: #94a3b8;
 }
 
-html, body {
+html,
+body {
   background: var(--bg);
   color: var(--text);
   height: 100%;
 }
 
-/* Subtle scrollbar */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #EAE6DC; border-radius: 8px; }
-::-webkit-scrollbar-thumb:hover { background: #D4CFC4; }
-
-/* Minimal focus ring */
-:focus-visible {
-  outline: 2px solid #6366F1;
-  outline-offset: 2px;
+@keyframes pill-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
-@layer utilities {
-  .transform-style-3d {
-    transform-style: preserve-3d;
-  }
+.pill-pulse-dot {
+  animation: pill-pulse 2.2s ease-in-out infinite;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--decision);
+  outline-offset: 2px;
 }

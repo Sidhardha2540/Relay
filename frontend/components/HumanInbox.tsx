@@ -1,121 +1,124 @@
 'use client';
 
 import { useCoord } from '@/lib/store';
-import { MessageCircleQuestion, Send, CheckCircle } from 'lucide-react';
-import { useState } from 'react';
-import { timeAgo } from '@/lib/utils';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AgentBadge } from '@/components/AgentBadge';
+import { CheckCircle } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 
 export function HumanInbox() {
   const questions = useCoord((s) => s.questions);
-  const openQuestions = questions.filter(q => q.status === 'open');
   const answerQuestion = useCoord((s) => s.answerQuestion);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const resolveQuestion = useCoord((s) => s.resolveQuestion);
 
-  // Auto-select the first open question
-  const activeQ = openQuestions.find(q => q.id === activeId) || openQuestions[0];
+  const open = useMemo(
+    () => questions.filter((q) => q.status === 'open'),
+    [questions],
+  );
 
-  const onSubmit = async () => {
-    if (!activeQ || !draft.trim() || submitting) return;
-    setSubmitting(true);
-    try {
-      await answerQuestion(activeQ.id, draft.trim());
-      setDraft('');
-      setActiveId(null);
-    } finally {
-      setSubmitting(false);
+  const blocking = open.filter((q) => q.blocking);
+  const nonBlocking = open.filter((q) => !q.blocking);
+
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+
+  const setAnswer = useCallback((id: string, value: string) => {
+    setAnswers((a) => ({ ...a, [id]: value }));
+  }, []);
+
+  const handleAnswer = async (id: string, q: { target: string }) => {
+    const text = (answers[id] || '').trim();
+    if (!text) return;
+    if (q.target === 'human') {
+      await answerQuestion(id, text);
+    } else {
+      await resolveQuestion(id, text);
     }
+    setAnswers((a) => {
+      const next = { ...a };
+      delete next[id];
+      return next;
+    });
   };
 
   return (
-    <div className="flex flex-col h-full bg-white">
-      <div className="px-5 py-4 border-b border-rose-100 bg-rose-50/50 flex items-center justify-between shrink-0">
-        <h2 className="font-semibold text-rose-800 text-sm flex items-center gap-2">
-          <MessageCircleQuestion className="w-4 h-4 text-rose-500" />
-          Needs Review
-        </h2>
-        {openQuestions.length > 0 && (
-          <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-            {openQuestions.length}
-          </span>
-        )}
-      </div>
+    <div className="space-y-4">
+      <h2 className="text-sm font-bold text-[var(--text)]">Inbox</h2>
 
-      <div className="flex-1 overflow-y-auto p-5">
-        <AnimatePresence mode="popLayout">
-          {openQuestions.length === 0 ? (
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              className="h-full flex flex-col items-center justify-center text-center p-6 text-muted"
+      {open.length === 0 ? (
+        <div className="flex flex-col items-center gap-2 py-8 text-[var(--text-muted)]">
+          <CheckCircle className="h-8 w-8 opacity-30" />
+          <p className="text-sm">Nothing needs your attention</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {blocking.map((q) => (
+            <div
+              key={q.id}
+              className="space-y-3 rounded-xl border-2 border-rose-300 bg-rose-50 p-4 dark:border-rose-800 dark:bg-rose-950/20"
             >
-              <div className="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center mb-3">
-                <CheckCircle className="w-6 h-6 text-emerald-400" />
-              </div>
-              <p className="text-sm font-medium">All clear.</p>
-              <p className="text-xs mt-1 opacity-70">No active blockers.</p>
-            </motion.div>
-          ) : (
-            <motion.div
-              key={activeQ.id}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.05 }}
-              className="flex flex-col h-full"
-            >
-              <div className="bg-rose-50/30 border border-rose-100 rounded-xl p-4 flex-1">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm text-text capitalize">{activeQ.asker_agent}</span>
-                    <span className="text-muted/50 text-xs">asks...</span>
-                  </div>
-                  <span className="text-[10px] text-muted font-medium">{timeAgo(activeQ.created_at)}</span>
-                </div>
-                
-                {activeQ.scope && (
-                  <div className="mb-3">
-                    <span className="font-mono text-xs text-rose-700 bg-rose-100/50 px-2 py-0.5 rounded-md">
-                      {activeQ.scope}
-                    </span>
-                  </div>
-                )}
-                
-                <p className="text-sm text-slate-800 leading-relaxed font-medium">
-                  {activeQ.asks}
-                </p>
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" />
+                <span className="text-xs font-bold uppercase tracking-wide text-rose-600 dark:text-rose-400">
+                  Blocking — needs your input
+                </span>
               </div>
 
-              <div className="mt-4 shrink-0">
-                <div className="relative">
-                  <textarea
-                    autoFocus
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
-                        onSubmit();
-                      }
-                    }}
-                    placeholder="Provide direction... (Cmd+Enter to send)"
-                    className="w-full bg-slate-50 border border-border rounded-xl p-3 pr-12 text-sm text-text placeholder:text-muted/50 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none"
-                    rows={3}
-                  />
-                  <button
-                    onClick={onSubmit}
-                    disabled={!draft.trim() || submitting}
-                    className="absolute right-2 bottom-2 p-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 disabled:hover:bg-blue-500 transition-colors shadow-sm"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+                <AgentBadge agentId={String(q.asker_agent)} small /> is asking:
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+
+              <p className="text-sm font-medium leading-snug text-[var(--text)]">{q.asks}</p>
+              <p className="font-mono text-xs text-[var(--text-muted)]">{q.scope}</p>
+
+              <div className="space-y-2">
+                <textarea
+                  className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-sm text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-rose-300 dark:focus:ring-rose-700"
+                  rows={2}
+                  placeholder="Your answer..."
+                  value={answers[q.id] || ''}
+                  onChange={(e) => setAnswer(q.id, e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAnswer(q.id, q)}
+                  className="w-full rounded-lg bg-rose-500 py-2 text-sm font-semibold text-white transition-colors hover:bg-rose-600"
+                >
+                  Send Answer
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {nonBlocking.map((q) => (
+            <div
+              key={q.id}
+              className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 dark:bg-[var(--surface2)]"
+            >
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                Non-blocking
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)]">
+                <AgentBadge agentId={String(q.asker_agent)} small />
+              </div>
+              <p className="text-xs leading-snug text-[var(--text)]">{q.asks}</p>
+              <p className="font-mono text-[10px] text-[var(--text-muted)]">{q.scope}</p>
+              <textarea
+                className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-xs text-[var(--text)] focus:outline-none focus:ring-2 focus:ring-[var(--border)]"
+                rows={2}
+                placeholder={q.target === 'human' ? 'Your answer…' : 'Resolution…'}
+                value={answers[q.id] || ''}
+                onChange={(e) => setAnswer(q.id, e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => handleAnswer(q.id, q)}
+                className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface2)] py-1.5 text-xs font-semibold text-[var(--text)] hover:bg-[var(--border)]/40"
+              >
+                Submit
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

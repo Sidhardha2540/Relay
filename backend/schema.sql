@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS participants (
   role_tag      TEXT,
   mode          TEXT NOT NULL DEFAULT 'exclusive' CHECK(mode IN ('exclusive','collaborative')),
   limits        TEXT NOT NULL DEFAULT '{}',   -- JSON: {max_calls_per_min, max_state_size_kb, alert_threshold}
-  registered_at TEXT NOT NULL
+  registered_at TEXT NOT NULL,
+  last_seen     TEXT,
+  status        TEXT NOT NULL DEFAULT 'online' CHECK(status IN ('online','idle','offline'))
 );
 
 -- NOTE: The following ALTER TABLE statements cannot use IF NOT EXISTS in SQLite.

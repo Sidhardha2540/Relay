@@ -87,18 +87,22 @@ TOOLS: list[Tool] = [
     Tool(
         name="register",
         description=(
-            "Register this agent with the Coord daemon before calling any other tool. "
-            "Declares the task, the URI scopes this agent will write to, "
-            "its coordination mode (exclusive/collaborative), and optional "
-            "rate/payload limits.\n\n"
-            "Returns 200 on success. Returns 409 if an exclusive scope overlap "
-            "exists with another registered agent (a non-blocking Question is "
-            "auto-raised for the human). "
+            "Announce this agent to the Coord daemon. Call once at session start "
+            "before any other tool.\n\n"
+            "This is a lightweight existence announcement — no scope conflicts are "
+            "checked here. Scope ownership is established dynamically when you call "
+            "claim_intent (the real coordination gate).\n\n"
+            "Two-phase flow:\n"
+            "  1. register(task='...')                      — announce you exist\n"
+            "  2. claim_intent(scope='...', action='...')   — lock scope before working\n\n"
+            "Scope is optional. Omit it to rely entirely on claim_intent for "
+            "coordination (recommended for dynamic work). Provide it only if you want "
+            "to pre-declare static ownership for the whole session.\n\n"
             "All mutation endpoints return 400 until register is called."
         ),
         inputSchema={
             "type": "object",
-            "required": ["task", "scope"],
+            "required": ["task"],
             "properties": {
                 "task": {
                     "type": "string",
@@ -108,9 +112,10 @@ TOOLS: list[Tool] = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "List of URI scopes this agent owns. "
+                        "Optional list of URI scopes this agent statically owns. "
                         "File paths: 'src/auth/', 'src/api/middleware.ts'. "
-                        "Virtual: 'virt://db/schema', 'virt://cloud/aws/s3'."
+                        "Virtual: 'virt://db/schema', 'virt://cloud/aws/s3'. "
+                        "Omit to use claim_intent for dynamic scope ownership."
                     ),
                 },
                 "type": {
@@ -128,9 +133,8 @@ TOOLS: list[Tool] = [
                     "enum": ["exclusive", "collaborative"],
                     "default": "exclusive",
                     "description": (
-                        "exclusive — this agent is the sole owner of its scopes; "
-                        "overlapping registrations are blocked. "
-                        "collaborative — writes outside owned scopes are logged but allowed."
+                        "exclusive — scope locks via claim_intent block other agents. "
+                        "collaborative — writes outside claimed scopes are logged but allowed."
                     ),
                 },
                 "limits": {

@@ -52,7 +52,10 @@ async def agent_worker(client, agent_id, iterations=5):
 async def main(num_agents):
     print(f"Starting load test with {num_agents} concurrent agents...")
     async with httpx.AsyncClient(timeout=30.0) as client:
-        tasks = [agent_worker(client, f"bot-{i}", iterations=5) for i in range(num_agents)]
+        tasks = [
+            agent_worker(client, f"stress-worker-{i}", iterations=5)
+            for i in range(num_agents)
+        ]
         await asyncio.gather(*tasks)
     print("Load test complete!")
 

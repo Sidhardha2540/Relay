@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { FeedItem } from './types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -72,4 +73,20 @@ export function agentStyle(agent: string | null | undefined): 'nerd' | 'visor' |
   const key = Object.keys(AGENT_STYLES).find(k => agent.toLowerCase().includes(k));
   if (key) return AGENT_STYLES[key as keyof typeof AGENT_STYLES] as any;
   return 'robot';
+}
+
+/** Feed rows that represent coordination conflicts (WS `coord_conflict` or heuristics). */
+export function conflictsFromFeed(feed: FeedItem[]): FeedItem[] {
+  return feed
+    .filter((f) => {
+      if (f.kind === 'conflict') return true;
+      const t = f.summary.toLowerCase();
+      return (
+        /\b(409|423)\b/.test(f.summary) ||
+        t.includes('conflict') ||
+        t.includes('overlap') ||
+        t.includes('existing_lease')
+      );
+    })
+    .slice(0, 20);
 }

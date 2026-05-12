@@ -134,11 +134,13 @@ coord/
 ## Quick Start
 
 ```bash
-# 1. Start the daemon
-cd backend
-pip install -r requirements.txt
-python main.py
+# 1. Start the daemon (run from the repo root — relative imports require the package layout)
+pip install -r backend/requirements.txt
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 49152
 # → daemon listening on http://127.0.0.1:49152
+#
+# Note: `cd backend && python main.py` fails with ImportError (relative imports).
+# Note: install deps first — otherwise ModuleNotFoundError: fastapi.
 
 # 2. Start the dashboard
 cd frontend

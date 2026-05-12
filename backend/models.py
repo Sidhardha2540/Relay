@@ -81,7 +81,7 @@ class ParticipantRegistration(BaseModel):
     agent_id: str
     type: Literal["agent", "human"]
     task: str
-    scope: list[str]                          # URI list: ["src/auth/", "virt://db/schema"]
+    scope: list[str] = Field(default_factory=list)  # Optional — declare upfront OR let claim_intent establish ownership dynamically
     role_tag: Optional[str] = None
     mode: Literal["exclusive", "collaborative"] = "exclusive"
     limits: Limits = Field(default_factory=Limits)

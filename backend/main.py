@@ -30,7 +30,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
@@ -66,6 +68,13 @@ rate_tracker: dict[str, list[float]] = {}
 _limits_cache: dict[str, Limits] = {}
 
 DEFAULT_LIMITS = Limits()   # max_calls_per_min=20, max_state_size_kb=100, alert=0.8
+
+# Demo / load-test IDs like bot-0, bot-9 — not real tool identities (cursor, claude-code, …).
+_SYNTHETIC_BOT_ID = re.compile(r"^bot[-_]?\d+$", re.IGNORECASE)
+
+
+def _is_synthetic_bot_agent_id(agent_id: str) -> bool:
+    return bool(_SYNTHETIC_BOT_ID.match(agent_id.strip()))
 
 
 async def _get_limits(agent_id: str) -> Limits:
@@ -109,12 +118,68 @@ def _check_rate(agent_id: str, max_calls: int) -> bool:
 # Lifespan: bootstrap and teardown
 # ----------------------------------------------------------------------
 
+async def _agent_lifecycle_task() -> None:
+    """Mark agents idle/offline from heartbeat age; broadcast status changes."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            now = datetime.now(timezone.utc)
+            idle_cutoff = (now - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            offline_cutoff = (now - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+            conn = storage.db()
+            cur = await conn.execute(
+                "SELECT agent_id FROM participants WHERE status = 'online' "
+                "AND (last_seen IS NULL OR last_seen < ?)",
+                (idle_cutoff,),
+            )
+            going_idle = [r["agent_id"] for r in await cur.fetchall()]
+            await cur.close()
+
+            cur = await conn.execute(
+                "SELECT agent_id FROM participants WHERE status = 'idle' "
+                "AND (last_seen IS NULL OR last_seen < ?)",
+                (offline_cutoff,),
+            )
+            going_offline = [r["agent_id"] for r in await cur.fetchall()]
+            await cur.close()
+
+            async with storage.db_lock:
+                conn = storage.db()
+                if going_idle:
+                    ph = ",".join("?" * len(going_idle))
+                    await conn.execute(
+                        f"UPDATE participants SET status = 'idle' WHERE agent_id IN ({ph})",
+                        going_idle,
+                    )
+                if going_offline:
+                    ph = ",".join("?" * len(going_offline))
+                    await conn.execute(
+                        f"UPDATE participants SET status = 'offline' WHERE agent_id IN ({ph})",
+                        going_offline,
+                    )
+                if going_idle or going_offline:
+                    await conn.commit()
+
+            for aid in going_idle:
+                await ws_broadcast.publish(
+                    "agent_status_changed", {"agent_id": aid, "status": "idle"}
+                )
+            for aid in going_offline:
+                await ws_broadcast.publish(
+                    "agent_status_changed", {"agent_id": aid, "status": "offline"}
+                )
+        except Exception as e:
+            logger.warning("lifecycle task error: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await storage.init_storage()
     # Warm up the inbox file so editors auto-detect it.
     state = await state_engine.get_state()
     await storage.regenerate_inbox(state["questions"])
+    asyncio.create_task(_agent_lifecycle_task())
     yield
     await storage.close_storage()
 
@@ -171,7 +236,7 @@ async def require_registered_agent(x_coord_agent_id: str | None) -> str:
 
 
 async def require_registered_with_rate_check(x_coord_agent_id: str | None) -> str:
-    """require_registered_agent + rate limiting.  Used by all mutation endpoints."""
+    """require_registered_agent + rate limiting + heartbeat (last_seen)."""
     agent = await require_registered_agent(x_coord_agent_id)
     limits = await _get_limits(agent)
     if not _check_rate(agent, limits.max_calls_per_min):
@@ -183,6 +248,13 @@ async def require_registered_with_rate_check(x_coord_agent_id: str | None) -> st
                 "Wait up to 60 s and retry."
             ),
         )
+    ts = now_iso()
+    async with storage.transaction() as conn:
+        await conn.execute(
+            "UPDATE participants SET last_seen = ?, status = 'online' WHERE agent_id = ?",
+            (ts, agent),
+        )
+        await conn.commit()
     return agent
 
 
@@ -196,17 +268,6 @@ def _result_to_response(result: dict) -> JSONResponse:
         code = int(result.get("code", 409))
         return JSONResponse(status_code=code, content=result)
     return JSONResponse(status_code=200, content=result)
-
-
-def _uri_scope_matches_registration(registered: str, candidate: str) -> bool:
-    """Reuse the same prefix matching logic as state_engine for registration
-    conflict detection.  Exact copy so main.py stays self-contained.
-    """
-    reg = registered.rstrip("/")
-    can = candidate.rstrip("/")
-    if reg == can:
-        return True
-    return can.startswith(reg + "/") or reg.startswith(can + "/")
 
 
 # ----------------------------------------------------------------------
@@ -228,70 +289,37 @@ async def healthz():
 
 @app.post("/api/register")
 async def register_participant(body: ParticipantRegistration):
-    """Register an agent or human with their scope and limits.
+    """Announce agent existence to the daemon.
+
+    This is a lightweight "I exist" call — no scope conflict checking happens
+    here.  Scope ownership is established dynamically when the agent calls
+    claim_intent.  That is the real coordination gate.
 
     Success  → 200  {"status": "registered", ...}
-    Conflict → 409  {"status": "conflict", "conflicting_agent": ..., ...}
-               (also auto-injects a non-blocking Question to human)
     Bad data → 400  (Pydantic validation)
 
-    Call this once at session start before any mutation endpoint.
-    Re-registering the same agent_id overwrites the prior registration.
+    Call this once at session start.  Re-registering the same agent_id
+    overwrites the prior registration (safe for session restarts).
+    Scope list is optional — omit it to declare no static scopes and rely
+    entirely on claim_intent for coordination.
     """
-    conn = storage.db()
-
-    if body.mode == "exclusive":
-        # Check whether any currently-registered exclusive agent owns an
-        # overlapping scope.
-        cur = await conn.execute(
-            "SELECT agent_id, scope, mode FROM participants WHERE mode = 'exclusive'",
+    if _is_synthetic_bot_agent_id(body.agent_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Agent IDs like bot-8 / bot_0 are reserved for throwaway demos. "
+                "Register with your real tool identity (e.g. cursor, claude-code, antigravity, aider, human)."
+            ),
         )
-        rows = await cur.fetchall()
-        await cur.close()
 
-        for row in rows:
-            if row["agent_id"] == body.agent_id:
-                # Same agent re-registering — allow (overwrite below).
-                continue
-            existing_scopes: list[str] = json.loads(row["scope"])
-            for ex_scope in existing_scopes:
-                for req_scope in body.scope:
-                    if _uri_scope_matches_registration(ex_scope, req_scope):
-                        # Conflict — auto-raise a non-blocking question and return 409.
-                        await state_engine.raise_question(
-                            scope=req_scope,
-                            asks=(
-                                f"Registration conflict: agent '{body.agent_id}' requested "
-                                f"scope '{req_scope}' which overlaps '{ex_scope}' owned by "
-                                f"'{row['agent_id']}' (exclusive). Human review required."
-                            ),
-                            asker_agent="coord_daemon",
-                            target="human",
-                            blocking=False,
-                        )
-                        return JSONResponse(
-                            status_code=409,
-                            content={
-                                "status": "conflict",
-                                "agent_id": body.agent_id,
-                                "code": 409,
-                                "conflicting_agent": row["agent_id"],
-                                "conflicting_scope": ex_scope,
-                                "requested_scope": req_scope,
-                                "detail": (
-                                    f"Scope '{req_scope}' overlaps exclusive scope "
-                                    f"'{ex_scope}' held by '{row['agent_id']}'."
-                                ),
-                            },
-                        )
-
+    reg_ts = now_iso()
     # Upsert participant (overwrite on re-registration).
     async with storage.transaction() as db_conn:
         await db_conn.execute(
             """
             INSERT INTO participants
-              (agent_id, type, task, scope, role_tag, mode, limits, registered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              (agent_id, type, task, scope, role_tag, mode, limits, registered_at, last_seen, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'online')
             ON CONFLICT(agent_id) DO UPDATE SET
               type         = excluded.type,
               task         = excluded.task,
@@ -299,7 +327,9 @@ async def register_participant(body: ParticipantRegistration):
               role_tag     = excluded.role_tag,
               mode         = excluded.mode,
               limits       = excluded.limits,
-              registered_at = excluded.registered_at
+              registered_at = excluded.registered_at,
+              last_seen    = excluded.last_seen,
+              status       = 'online'
             """,
             (
                 body.agent_id,
@@ -309,7 +339,8 @@ async def register_participant(body: ParticipantRegistration):
                 body.role_tag,
                 body.mode,
                 json.dumps(body.limits.model_dump()),
-                now_iso(),
+                reg_ts,
+                reg_ts,
             ),
         )
         await db_conn.commit()
@@ -325,6 +356,21 @@ async def register_participant(body: ParticipantRegistration):
         "ts": now_iso(),
     })
 
+    await ws_broadcast.publish(
+        "agent_registered",
+        {
+            "agent_id": body.agent_id,
+            "type": body.type,
+            "task": body.task,
+            "scope": body.scope,
+            "role_tag": body.role_tag,
+            "mode": body.mode,
+            "registered_at": reg_ts,
+            "last_seen": reg_ts,
+            "status": "online",
+        },
+    )
+
     return JSONResponse(
         status_code=200,
         content={
@@ -334,6 +380,117 @@ async def register_participant(body: ParticipantRegistration):
             "mode": body.mode,
         },
     )
+
+
+@app.delete("/api/participants/{agent_id}")
+async def delete_participant(
+    agent_id: str,
+    x_coord_agent_id: str | None = Header(default=None),
+):
+    """Remove a participant. Only that agent or ``human`` may call."""
+    caller = require_agent(x_coord_agent_id)
+    if caller != agent_id and caller != "human":
+        raise HTTPException(
+            status_code=403,
+            detail="Only the agent itself or human can remove a participant.",
+        )
+    async with storage.transaction() as conn:
+        await conn.execute("DELETE FROM participants WHERE agent_id = ?", (agent_id,))
+        await conn.commit()
+    _limits_cache.pop(agent_id, None)
+    rate_tracker.pop(agent_id, None)
+    await storage.append_log(
+        {
+            "type": "participant_removed",
+            "agent_id": agent_id,
+            "by": caller,
+            "ts": now_iso(),
+        }
+    )
+    await ws_broadcast.publish("agent_unregistered", {"agent_id": agent_id})
+    return {"status": "removed", "agent_id": agent_id}
+
+
+@app.post("/api/participants/purge")
+async def purge_idle_participants(
+    x_coord_agent_id: str | None = Header(default=None),
+):
+    """Drop participants with no heartbeat in the last 2 hours. Human only."""
+    caller = require_agent(x_coord_agent_id)
+    if caller != "human":
+        raise HTTPException(
+            status_code=403,
+            detail="Only human can purge participants.",
+        )
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%fZ"
+    )
+    stale: list[str] = []
+    async with storage.transaction() as conn:
+        cur = await conn.execute(
+            "SELECT agent_id FROM participants WHERE last_seen IS NULL OR last_seen < ?",
+            (cutoff,),
+        )
+        stale = [row["agent_id"] for row in await cur.fetchall()]
+        await cur.close()
+        if stale:
+            ph = ",".join("?" * len(stale))
+            await conn.execute(
+                f"DELETE FROM participants WHERE agent_id IN ({ph})",
+                stale,
+            )
+        await conn.commit()
+    for aid in stale:
+        _limits_cache.pop(aid, None)
+        rate_tracker.pop(aid, None)
+        await ws_broadcast.publish("agent_unregistered", {"agent_id": aid})
+    return {"status": "purged", "removed": stale}
+
+
+@app.post("/api/participants/remove-synthetic-bots")
+async def remove_synthetic_bot_participants(
+    x_coord_agent_id: str | None = Header(default=None),
+):
+    """Remove participants whose ids match synthetic demo bots (``bot-9``, ``bot_0``, …).
+
+    Human only. Does not remove real identities (cursor, claude-code, antigravity, …).
+    """
+    caller = require_agent(x_coord_agent_id)
+    if caller != "human":
+        raise HTTPException(
+            status_code=403,
+            detail="Only human can remove synthetic bot participants.",
+        )
+
+    async with storage.transaction() as conn:
+        cur = await conn.execute("SELECT agent_id FROM participants", ())
+        rows = await cur.fetchall()
+        await cur.close()
+        to_remove = [r["agent_id"] for r in rows if _is_synthetic_bot_agent_id(r["agent_id"])]
+
+        if to_remove:
+            ph = ",".join("?" * len(to_remove))
+            await conn.execute(
+                f"DELETE FROM participants WHERE agent_id IN ({ph})",
+                to_remove,
+            )
+        await conn.commit()
+
+    for aid in to_remove:
+        _limits_cache.pop(aid, None)
+        rate_tracker.pop(aid, None)
+        await storage.append_log(
+            {
+                "type": "participant_removed",
+                "agent_id": aid,
+                "by": caller,
+                "reason": "synthetic_bot_cleanup",
+                "ts": now_iso(),
+            }
+        )
+        await ws_broadcast.publish("agent_unregistered", {"agent_id": aid})
+
+    return {"status": "removed_synthetic_bots", "removed": to_remove}
 
 
 # ----------------------------------------------------------------------

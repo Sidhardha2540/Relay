@@ -55,11 +55,26 @@ export interface Question {
   resolved_at: string | null;
 }
 
+export type ParticipantStatus = 'online' | 'idle' | 'offline';
+
+export interface Participant {
+  agent_id: string;
+  type: 'agent' | 'human';
+  task: string;
+  scope: string[];
+  role_tag?: string | null;
+  mode: 'exclusive' | 'collaborative';
+  registered_at: string;
+  status: ParticipantStatus;
+  last_seen?: string;
+}
+
 export interface StateSnapshot {
   decisions: Decision[];
   discoveries: Discovery[];
   intents: Intent[];
   questions: Question[];
+  participants?: Participant[];
   server_time: string;
 }
 
@@ -69,6 +84,9 @@ export interface StateSnapshot {
 
 export type WSEvent =
   | { event: 'state_snapshot';      data: StateSnapshot }
+  | { event: 'agent_registered';   data: Participant }
+  | { event: 'agent_unregistered'; data: { agent_id: string } }
+  | { event: 'agent_status_changed'; data: { agent_id: string; status: ParticipantStatus } }
   | { event: 'decision_committed';  data: Decision }
   | { event: 'discovery_shared';    data: Discovery }
   | { event: 'discovery_superseded';data: { id: string; scope: string } }
@@ -78,7 +96,16 @@ export type WSEvent =
   | { event: 'intent_released';     data: { id: string; scope: string } }
   | { event: 'question_raised';     data: Question }
   | { event: 'question_answered';   data: { id: string; answer: string; resolved_by: string; resolved_at: string } }
-  | { event: 'question_resolved';   data: { id: string; resolution: string; resolved_by: string; resolved_at: string } };
+  | { event: 'question_resolved';   data: { id: string; resolution: string; resolved_by: string; resolved_at: string } }
+  | {
+      event: 'coord_conflict';
+      data: {
+        summary: string;
+        scope: string;
+        code?: number;
+        agent?: AgentId | null;
+      };
+    };
 
 export type WSEnvelope = WSEvent & { ts: string };
 
@@ -88,8 +115,8 @@ export type WSEnvelope = WSEvent & { ts: string };
 
 /** Unified row for the center timeline. The store derives these from events. */
 export interface FeedItem {
-  id: string;             // event id or ws ts
-  kind: 'decision' | 'discovery' | 'intent' | 'question' | 'system';
+  id: string;
+  kind: 'decision' | 'discovery' | 'intent' | 'question' | 'system' | 'conflict';
   agent: AgentId | null;
   scope: string;
   summary: string;

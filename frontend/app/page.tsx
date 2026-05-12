@@ -1,50 +1,41 @@
 'use client';
 
-import { useCoord } from '@/lib/store';
+import { AgentPanel } from '@/components/AgentPanel';
+import { ConflictAlerts } from '@/components/ConflictAlerts';
+import { DecisionLedger } from '@/components/DecisionLedger';
+import { Header } from '@/components/Header';
+import { HumanInbox } from '@/components/HumanInbox';
+import { ScopeGraph } from '@/components/ScopeGraph';
 import { useCoordSocket } from '@/lib/ws-client';
-import { useEffect, useState } from 'react';
-import { TopHeader } from '@/components/TopHeader';
-import { SpatialCanvas } from '@/components/SpatialCanvas';
-import { AgentRoster } from '@/components/AgentRoster';
-import { ActivityLogs } from '@/components/ActivityLogs';
 
 export default function Page() {
   useCoordSocket();
 
-  const connected = useCoord((s) => s.connected);
-  const [demoMode, setDemoMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<'canvas' | 'roster' | 'logs'>('canvas');
-  const [animationsEnabled, setAnimationsEnabled] = useState(true);
-
-  useEffect(() => {
-    const isDemo = new URLSearchParams(window.location.search).get('demo') === '1';
-    setDemoMode(isDemo);
-  }, []);
-
   return (
-    <main className="h-screen w-screen flex flex-col bg-bg text-text overflow-hidden selection:bg-indigo-100 font-sans">
-      <TopHeader 
-        connected={connected} 
-        demoMode={demoMode} 
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        animationsEnabled={animationsEnabled}
-        setAnimationsEnabled={setAnimationsEnabled}
-      />
-      
-      <div className="flex-1 relative w-full h-full overflow-hidden">
-        {activeTab === 'canvas' && <SpatialCanvas animationsEnabled={animationsEnabled} />}
-        {activeTab === 'roster' && (
-          <div className="absolute inset-0 overflow-y-auto p-6 scrollbar-thin">
-            <AgentRoster />
+    <div className="flex h-screen flex-col overflow-hidden bg-[var(--bg)] text-[var(--text)]">
+      <Header />
+      <main
+        className="grid min-h-0 flex-1 overflow-hidden"
+        style={{ gridTemplateColumns: '280px 1fr 300px' }}
+      >
+        <aside className="space-y-2 overflow-y-auto border-r border-[var(--border)] p-3">
+          <AgentPanel />
+        </aside>
+
+        <div className="flex min-h-0 flex-col overflow-hidden border-[var(--border)]">
+          <div className="min-h-0 flex-[3] overflow-y-auto border-b border-[var(--border)] p-4">
+            <ScopeGraph />
           </div>
-        )}
-        {activeTab === 'logs' && (
-          <div className="absolute inset-0 overflow-y-auto p-6 scrollbar-thin">
-            <ActivityLogs />
+          <div className="min-h-0 flex-[2] overflow-y-auto p-4">
+            <DecisionLedger />
           </div>
-        )}
-      </div>
-    </main>
+        </div>
+
+        <aside className="space-y-4 overflow-y-auto border-l border-[var(--border)] p-3">
+          <HumanInbox />
+          <ConflictAlerts />
+        </aside>
+      </main>
+    </div>
   );
 }

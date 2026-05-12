@@ -85,12 +85,18 @@ def _uri_scope_matches(registered: str, requested: str) -> bool:
 async def check_scope_permission(agent_id: str, scope: str) -> tuple[bool, str]:
     """Return (allowed, mode) for agent_id writing to scope.
 
+    Two-phase ownership model:
+      Phase 1 — static: agent declared scope at register time.
+      Phase 2 — dynamic: agent has an active intent covering the scope
+                (established via claim_intent, the real coordination gate).
+
     Logic:
-    - Unregistered agent  → (False, "exclusive")  — always blocked
-    - Registered, scope owned                      → (True,  mode)
-    - Registered, scope NOT owned, exclusive mode  → (False, "exclusive")
-    - Registered, scope NOT owned, collaborative   → (False, "collaborative")
-      (caller logs and allows through — cooperative agents may write anywhere)
+    - Unregistered agent                           → (False, "exclusive")
+    - Static scope match                           → (True,  mode)
+    - No static scope but active intent matches    → (True,  mode)
+    - Registered, no match anywhere, exclusive     → (False, "exclusive")
+    - Registered, no match anywhere, collaborative → (False, "collaborative")
+      (caller logs and allows — collaborative agents may write anywhere)
     """
     conn = storage.db()
     cur = await conn.execute(
@@ -103,11 +109,25 @@ async def check_scope_permission(agent_id: str, scope: str) -> tuple[bool, str]:
     if row is None:
         return False, "exclusive"
 
-    registered_scopes: list[str] = json.loads(row["scope"])
     mode: str = row["mode"]
 
+    # Phase 1: static scope declared at registration.
+    registered_scopes: list[str] = json.loads(row["scope"])
     for reg_scope in registered_scopes:
         if _uri_scope_matches(reg_scope, scope):
+            return True, mode
+
+    # Phase 2: dynamic ownership via an active intent.
+    # If the agent has claimed an intent that covers this scope, allow it.
+    cur = await conn.execute(
+        "SELECT scope FROM intents WHERE agent = ? AND status = 'active'",
+        (agent_id,),
+    )
+    active_intents = await cur.fetchall()
+    await cur.close()
+
+    for intent_row in active_intents:
+        if _uri_scope_matches(intent_row["scope"], scope):
             return True, mode
 
     return False, mode

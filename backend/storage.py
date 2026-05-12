@@ -67,6 +67,8 @@ async def _apply_migrations() -> None:
         ("discoveries", "sequence", "INTEGER DEFAULT 0"),
         ("intents",     "sequence", "INTEGER DEFAULT 0"),
         ("questions",   "sequence", "INTEGER DEFAULT 0"),
+        ("participants", "last_seen", "TEXT"),
+        ("participants", "status", "TEXT DEFAULT 'online'"),
     ]
     conn = db()
     for table, col, defn in migrations:
@@ -75,6 +77,15 @@ async def _apply_migrations() -> None:
         await cur.close()
         if col not in existing_cols:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {defn}")
+    await conn.commit()
+
+    # Backfill heartbeat for legacy participant rows.
+    await conn.execute(
+        "UPDATE participants SET last_seen = registered_at WHERE last_seen IS NULL"
+    )
+    await conn.execute(
+        "UPDATE participants SET status = 'online' WHERE status IS NULL OR status = ''"
+    )
     await conn.commit()
 
 

@@ -10,6 +10,7 @@ import type {
   Decision,
   Discovery,
   Intent,
+  Participant,
   Question,
   WSEnvelope,
   FeedItem,
@@ -28,6 +29,7 @@ interface CoordState {
   discoveries: Discovery[];
   intents: Intent[];
   questions: Question[];
+  participants: Participant[];
   feed: FeedItem[];
 
   // Apply a single envelope to the store.
@@ -128,6 +130,25 @@ function toFeedItem(env: WSEnvelope): FeedItem | null {
             : `resolved: ${env.data.resolution}`,
         ts,
       };
+    case 'agent_registered':
+      return {
+        id: `reg-${env.data.agent_id}-${env.ts}`,
+        kind: 'system',
+        agent: env.data.agent_id,
+        scope: '',
+        summary: `joined: ${env.data.task}`,
+        ts,
+      };
+    case 'coord_conflict':
+      return {
+        id: `cf-${env.ts}-${env.data.scope}-${env.data.code ?? 'x'}`,
+        kind: 'conflict',
+        agent: env.data.agent ?? null,
+        scope: env.data.scope,
+        summary: env.data.summary,
+        ts,
+        meta: env.data.code != null ? { code: env.data.code } : undefined,
+      };
     default:
       return null;
   }
@@ -140,6 +161,7 @@ export const useCoord = create<CoordState>((set, get) => ({
   discoveries: [],
   intents: [],
   questions: [],
+  participants: [],
   feed: [],
 
   setConnected: (connected) => set({ connected }),
@@ -196,10 +218,42 @@ export const useCoord = create<CoordState>((set, get) => ({
             discoveries: env.data.discoveries,
             intents: env.data.intents,
             questions: env.data.questions,
+            participants: (env.data.participants ?? []).map((p) => ({
+              ...p,
+              status: p.status ?? 'online',
+              last_seen: p.last_seen ?? p.registered_at,
+            })),
             feed: reconstructedFeed,
             serverTime: env.data.server_time,
           };
         }
+
+        case 'agent_registered':
+          return {
+            participants: [
+              {
+                ...env.data,
+                status: env.data.status ?? 'online',
+                last_seen: env.data.last_seen ?? env.data.registered_at,
+              },
+              ...s.participants.filter((p) => p.agent_id !== env.data.agent_id),
+            ],
+            feed: nextFeed,
+          };
+
+        case 'agent_status_changed':
+          return {
+            participants: s.participants.map((p) =>
+              p.agent_id === env.data.agent_id ? { ...p, status: env.data.status } : p
+            ),
+            feed: nextFeed,
+          };
+
+        case 'agent_unregistered':
+          return {
+            participants: s.participants.filter((p) => p.agent_id !== env.data.agent_id),
+            feed: nextFeed,
+          };
 
         case 'decision_committed':
           return {
@@ -274,6 +328,9 @@ export const useCoord = create<CoordState>((set, get) => ({
             feed: nextFeed,
           };
 
+        case 'coord_conflict':
+          return { feed: nextFeed };
+
         default:
           return { feed: nextFeed };
       }
@@ -294,7 +351,8 @@ export const useCoord = create<CoordState>((set, get) => ({
       discoveries: [],
       intents: [],
       questions: [],
-      feed: []
+      participants: [],
+      feed: [],
     });
   },
 }));
