@@ -164,8 +164,9 @@ async def commit_decision(
             return {
                 "status": "conflict",
                 "code": 403,
-                "detail": f"Agent '{agent}' is not registered or does not own scope '{scope}'.",
-                "required_action": "register_with_correct_scope",
+                "detail": f"Agent '{agent}' does not own scope '{scope}'.",
+                "next_step": f"Call claim_intent(scope='{scope}', action='...') first to acquire a lease, "
+                             f"then retry commit_decision. Or declare '{scope}' in register(scope=[...]).",
             }
 
     async with storage.transaction() as conn:
@@ -187,12 +188,9 @@ async def commit_decision(
                     "agent": existing["agent"],
                 },
                 "attempted": {"value": value, "agent": agent},
-                "required_action": "raise_question",
-                "suggested_question": (
-                    f"Decision conflict on `{scope}::{key}`: "
-                    f"existing `{existing['value']}` (by {existing['agent']}) "
-                    f"vs proposed `{value}` (by {agent}). Which should win?"
-                ),
+                "next_step": f"Do NOT retry — First-Write-Wins means the existing value stands. "
+                             f"Call raise_question(scope='{scope}', asks='...') to escalate "
+                             f"the conflict to a human or the owning agent for resolution.",
             }
 
         seq = await storage.next_sequence()
@@ -249,8 +247,9 @@ async def share_discovery(
             return {
                 "status": "conflict",
                 "code": 403,
-                "detail": f"Agent '{agent}' is not registered or does not own scope '{scope}'.",
-                "required_action": "register_with_correct_scope",
+                "detail": f"Agent '{agent}' does not own scope '{scope}'.",
+                "next_step": f"Call claim_intent(scope='{scope}', action='...') first, "
+                             f"then retry share_discovery.",
             }
 
     discovery_id = _gen_id("disc")
@@ -328,8 +327,10 @@ async def claim_intent(
             return {
                 "status": "conflict",
                 "code": 403,
-                "detail": f"Agent '{agent}' is not registered or does not own scope '{scope}'.",
-                "required_action": "register_with_correct_scope",
+                "detail": f"Agent '{agent}' does not own scope '{scope}'.",
+                "next_step": f"You must own the scope before claiming an intent on it. "
+                             f"Either declare '{scope}' in register(scope=[...]) or "
+                             f"narrow your intent to a scope you already own.",
             }
 
     # GC first so callers see an honest picture.
@@ -349,7 +350,9 @@ async def claim_intent(
                 "code": 429,
                 "active_count": row["n"],
                 "max": MAX_ACTIVE_INTENTS_PER_AGENT,
-                "required_action": "release_an_intent_first",
+                "next_step": f"You have {row['n']} active intents (max {MAX_ACTIVE_INTENTS_PER_AGENT}). "
+                             f"Call release_intent(intent_id='...') on a completed scope first, "
+                             f"then retry claim_intent.",
             }
 
         # Overlap check.
@@ -392,7 +395,10 @@ async def claim_intent(
                         "action": lease["action"],
                         "expires_at": lease["expires_at"],
                     },
-                    "required_action": "wait_or_narrow_scope",
+                    "next_step": f"Scope '{scope}' is locked by agent '{lease['agent']}' "
+                                 f"until {lease['expires_at']}. "
+                                 f"Wait for the lease to expire or ask '{lease['agent']}' "
+                                 f"to call release_intent('{lease['id']}') when done.",
                 }
 
         # Clear to claim.
@@ -432,11 +438,16 @@ async def release_intent(intent_id: str, agent: str) -> dict[str, Any]:
         row = await cur.fetchone()
         await cur.close()
         if row is None:
-            return {"status": "conflict", "code": 404}
+            return {
+                "status": "conflict", "code": 404,
+                "next_step": f"Intent '{intent_id}' does not exist. "
+                             f"Call read_state() to see your active intents.",
+            }
         if row["agent"] != agent:
             return {
                 "status": "conflict", "code": 403,
-                "required_action": "only_owner_can_release",
+                "next_step": f"Only the agent that claimed this intent can release it. "
+                             f"This intent belongs to '{row['agent']}'.",
             }
         if row["status"] != "active":
             return {"status": "noop"}
@@ -542,7 +553,11 @@ async def answer_question(
         row = await cur.fetchone()
         await cur.close()
         if row is None:
-            return {"status": "conflict", "code": 404}
+            return {
+                "status": "conflict", "code": 404,
+                "next_step": f"Question '{question_id}' does not exist. "
+                             f"Call read_state() to see open questions.",
+            }
         if row["status"] in ("resolved", "deferred"):
             return {"status": "noop", "current_status": row["status"]}
 
@@ -579,7 +594,11 @@ async def resolve_question(
         row = await cur.fetchone()
         await cur.close()
         if row is None:
-            return {"status": "conflict", "code": 404}
+            return {
+                "status": "conflict", "code": 404,
+                "next_step": f"Question '{question_id}' does not exist. "
+                             f"Call read_state() to see open questions.",
+            }
         await conn.execute(
             "UPDATE questions SET status = 'resolved', "
             "answer = COALESCE(answer, ?), resolved_by = ?, resolved_at = ? "

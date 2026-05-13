@@ -30,3 +30,12 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Local docs / generated / secrets (do not commit)
+*.docx
+~$*.docx
+docgen/
+screenshots/
+demo/claude_mcp_config.json
+demo/cursor_mcp_config.json
+frontend/tsconfig.tsbuildinfo

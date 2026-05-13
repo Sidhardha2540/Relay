@@ -41,65 +41,91 @@ async def call(
         data = resp.json()
     except json.JSONDecodeError:
         data = {"http_status": resp.status_code, "text": resp.text[:200]}
-    print(f"  {color_agent(agent)} {method} {path:<40} -> {resp.status_code} {data.get('status', '')}")
+    status_str = data.get('status', '') or data.get('detail', '') or ''
+    if resp.status_code >= 400:
+        print(f"  {color_agent(agent)} {method} {path:<40} -> {resp.status_code} ERROR: {data}")
+    else:
+        print(f"  {color_agent(agent)} {method} {path:<40} -> {resp.status_code} {status_str}")
     return data
 
 
 async def seed_baseline(client: httpx.AsyncClient) -> None:
-    """Idempotent baseline: one decision, one discovery, one intent."""
+    """Idempotent baseline: todo-app scenario matching the LinkedIn video."""
+    print("--- registering agents ---")
+    await call(client, "POST", "/api/register", "claude-code", {
+        "agent_id": "claude-code",
+        "type": "agent",
+        "task": "Add TodoUpdate model and PUT /todos/{id} + DELETE /todos/{id} endpoints.",
+        "scope": ["main.py", "models.py"],
+    })
+    await call(client, "POST", "/api/register", "cursor", {
+        "agent_id": "cursor",
+        "type": "agent",
+        "task": "Refactor main.py to use SQLAlchemy ORM and add database session handling.",
+        "scope": ["main.py", "database.py"],
+    })
+    await call(client, "POST", "/api/register", "aider", {
+        "agent_id": "aider",
+        "type": "agent",
+        "task": "Write pytest tests for all CRUD endpoints.",
+        "scope": ["tests/"],
+    })
     print("--- seeding baseline state ---")
     await call(client, "POST", "/api/discoveries", "claude-code", {
-        "scope": "auth/middleware.ts",
-        "summary": "Exports verifyJWT(token: string): JWTPayload at line 14. Uses jsonwebtoken@9.x.",
+        "scope": "main.py",
+        "summary": "In-memory todos list at line 8. GET /todos and POST /todos defined. No PUT or DELETE yet.",
         "file_hash": "sha256:abc123def456",
         "confidence": "verified",
     })
     await call(client, "POST", "/api/decisions", "claude-code", {
-        "scope": "auth",
-        "key": "token_validator_name",
-        "value": "verifyJWT",
-        "rationale": "Already exported by middleware.ts; matches existing call sites.",
+        "scope": "main.py",
+        "key": "todo_storage_backend",
+        "value": "in_memory_list",
+        "rationale": "Current implementation uses a plain Python list. Keeping it consistent until ORM migration is agreed.",
     })
     await call(client, "POST", "/api/intents", "cursor", {
-        "scope": "frontend/components/auth/",
-        "action": "Wire up the login form to call /api/auth/verify and handle 401s.",
+        "scope": "main.py",
+        "action": "Rewrite main.py to use SQLAlchemy ORM — replaces in-memory list with DB session.",
         "ttl_minutes": 10,
     })
 
 
 async def narrate_conflict(client: httpx.AsyncClient) -> None:
-    """The dramatic sequence: Cursor tries to redefine the contract."""
+    """The dramatic sequence: Cursor tries to redefine storage backend while Claude already locked it."""
     print("\n--- live conflict sequence ---")
 
-    print("\n[1] Cursor reads a stale view and tries to commit a different name.")
+    print("\n[1] Cursor claims main.py scope and tries to commit a conflicting storage decision.")
     await asyncio.sleep(2)
+    # cursor already has intent on main.py from baseline — now tries to override the storage decision
     res = await call(client, "POST", "/api/decisions", "cursor", {
-        "scope": "auth",
-        "key": "token_validator_name",
-        "value": "validateToken",
-        "rationale": "Reads better in the frontend hook.",
+        "scope": "main.py",
+        "key": "todo_storage_backend",
+        "value": "sqlalchemy_orm",
+        "rationale": "ORM is cleaner and the whole point of this task.",
     })
     assert res.get("code") == 409, f"expected 409 conflict, got: {res}"
 
-    print("\n[2] Cursor responds correctly - raises the question with the suggested text.")
+    print("\n[2] Cursor raises a blocking question for the human to resolve.")
     await asyncio.sleep(2)
     q = await call(client, "POST", "/api/questions", "cursor", {
-        "scope": "auth::token_validator_name",
-        "asks": res.get("suggested_question", "Conflict on naming."),
+        "scope": "main.py::todo_storage_backend",
+        "asks": res.get("suggested_question",
+            "claude-code locked todo_storage_backend=in_memory_list. "
+            "Cursor wants sqlalchemy_orm. Which should we use?"),
         "target": "human",
         "blocking": True,
     })
     qid = q.get("id")
 
-    print("\n[3] (Dashboard pulses red - blocking question in inbox.)")
+    print("\n[3] (Dashboard inbox shows blocking question - both agents paused.)")
     await asyncio.sleep(4)
 
-    print("\n[4] Human resolves: keep the existing decision.")
+    print("\n[4] Human resolves: switch to SQLAlchemy - that was always the plan.")
     await call(client, "POST", f"/api/questions/{qid}/resolve", "human", {
-        "resolution": "Keep verifyJWT - already used by 4 other call sites.",
+        "resolution": "Use SQLAlchemy ORM. Claude-code should update its endpoints to use the DB session instead of the in-memory list.",
     })
 
-    print("\n[5] Claude finishes its work, releases its scope.")
+    print("\n[5] Claude-code releases main.py scope after completing its endpoints.")
     state = await call(client, "GET", "/api/state", "human")
     own = [i for i in state.get("intents", []) if i["agent"] == "claude-code"]
     if own:
@@ -107,16 +133,16 @@ async def narrate_conflict(client: httpx.AsyncClient) -> None:
     else:
         print("  (claude-code had no active intents to release)")
 
-    print("\n[6] Discovery becomes stale - the file got edited.")
+    print("\n[6] Cursor posts updated discovery after ORM rewrite.")
     await asyncio.sleep(2)
-    await call(client, "POST", "/api/discoveries", "claude-code", {
-        "scope": "auth/middleware.ts",
-        "summary": "Exports verifyJWT(token, opts?: VerifyOpts) - added optional second arg.",
-        "file_hash": "sha256:newer-hash-789",
+    await call(client, "POST", "/api/discoveries", "cursor", {
+        "scope": "main.py",
+        "summary": "Rewritten with SQLAlchemy. SessionLocal at line 12. All endpoints use db: Session = Depends(get_db).",
+        "file_hash": "sha256:newer-hash-sqlalchemy",
         "confidence": "verified",
     })
 
-    print("\n--- done. Dashboard should show ~10 events on the timeline. ---")
+    print("\n--- done. Dashboard should show agents, scope graph, decision ledger, and resolved conflict. ---")
 
 
 async def main() -> None:

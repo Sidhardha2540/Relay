@@ -207,7 +207,11 @@ def require_agent(x_coord_agent_id: str | None) -> str:
     if not x_coord_agent_id:
         raise HTTPException(
             status_code=400,
-            detail="X-Coord-Agent-Id header is required",
+            detail={
+                "error": "Missing agent identity header.",
+                "next_step": "Add 'X-Coord-Agent-Id: <your-agent-id>' to every request. "
+                             "The MCP shim sets this automatically from $COORD_AGENT_ID.",
+            },
         )
     return x_coord_agent_id
 
@@ -227,10 +231,11 @@ async def require_registered_agent(x_coord_agent_id: str | None) -> str:
     if row is None:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Agent '{agent}' is not registered. "
-                "Call POST /api/register before any other endpoint."
-            ),
+            detail={
+                "error": f"Agent '{agent}' is not registered.",
+                "next_step": "Call register(task='describe your task here') before any other tool. "
+                             "This is required once per session.",
+            },
         )
     return agent
 
@@ -242,11 +247,12 @@ async def require_registered_with_rate_check(x_coord_agent_id: str | None) -> st
     if not _check_rate(agent, limits.max_calls_per_min):
         raise HTTPException(
             status_code=429,
-            detail=(
-                f"Rate limit exceeded for agent '{agent}'. "
-                f"Max {limits.max_calls_per_min} calls/min. "
-                "Wait up to 60 s and retry."
-            ),
+            detail={
+                "error": f"Rate limit exceeded for agent '{agent}'.",
+                "limit": limits.max_calls_per_min,
+                "next_step": f"Wait up to 60 seconds and retry. "
+                             f"To raise the limit, pass limits={{max_calls_per_min: N}} in register().",
+            },
         )
     ts = now_iso()
     async with storage.transaction() as conn:
@@ -306,10 +312,11 @@ async def register_participant(body: ParticipantRegistration):
     if _is_synthetic_bot_agent_id(body.agent_id):
         raise HTTPException(
             status_code=400,
-            detail=(
-                "Agent IDs like bot-8 / bot_0 are reserved for throwaway demos. "
-                "Register with your real tool identity (e.g. cursor, claude-code, antigravity, aider, human)."
-            ),
+            detail={
+                "error": f"Agent ID '{body.agent_id}' is reserved for throwaway demos.",
+                "next_step": "Use your real tool identity as the agent ID. "
+                             "Examples: 'cursor', 'claude-code', 'aider', 'human', 'antigravity'.",
+            },
         )
 
     reg_ts = now_iso()
@@ -392,7 +399,11 @@ async def delete_participant(
     if caller != agent_id and caller != "human":
         raise HTTPException(
             status_code=403,
-            detail="Only the agent itself or human can remove a participant.",
+            detail={
+                "error": f"Agent '{caller}' cannot remove participant '{agent_id}'.",
+                "next_step": "Only the agent itself or the 'human' identity can remove a participant. "
+                             "Re-send with X-Coord-Agent-Id matching the agent being removed.",
+            },
         )
     async with storage.transaction() as conn:
         await conn.execute("DELETE FROM participants WHERE agent_id = ?", (agent_id,))
@@ -420,7 +431,10 @@ async def purge_idle_participants(
     if caller != "human":
         raise HTTPException(
             status_code=403,
-            detail="Only human can purge participants.",
+            detail={
+                "error": "Only the 'human' identity can purge participants.",
+                "next_step": "Re-send with X-Coord-Agent-Id: human header.",
+            },
         )
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime(
         "%Y-%m-%dT%H:%M:%S.%fZ"
@@ -459,7 +473,10 @@ async def remove_synthetic_bot_participants(
     if caller != "human":
         raise HTTPException(
             status_code=403,
-            detail="Only human can remove synthetic bot participants.",
+            detail={
+                "error": "Only the 'human' identity can remove synthetic bot participants.",
+                "next_step": "Re-send with X-Coord-Agent-Id: human header.",
+            },
         )
 
     async with storage.transaction() as conn:
